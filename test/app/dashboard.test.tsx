@@ -180,9 +180,16 @@ describe('Dashboard', () => {
 
   it('refreshes the numbers on a metrics event without the skeleton', async () => {
     let round = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
     mockFetch({
-      'GET /admin/metrics/utilization': () =>
-        json(200, { ...METRICS.utilization, today: { ...METRICS.utilization.today, percent: ++round === 1 ? 74 : 80 } }),
+      'GET /admin/metrics/utilization': async () => {
+        const n = ++round
+        if (n > 1) await gate
+        return json(200, { ...METRICS.utilization, today: { ...METRICS.utilization.today, percent: n === 1 ? 74 : 80 } })
+      },
       'GET /admin/metrics/circulation': () => json(200, METRICS.circulation),
       'GET /admin/metrics/overdue': () => json(200, METRICS.overdue),
       'GET /admin/metrics/demand': () => json(200, METRICS.demand),
@@ -192,9 +199,14 @@ describe('Dashboard', () => {
     expect(await screen.findByText('74%')).toBeInTheDocument()
 
     act(() => live.handlers!.onEvent({ type: 'activity', topics: ['metrics'] }))
+    // The refetch has started (after the 1 s debounce) and is still pending:
+    // the old numbers stay on screen and there is no skeleton.
+    await waitFor(() => expect(round).toBe(2), { timeout: 2_000 })
     expect(screen.queryByLabelText('Loading dashboard metrics')).toBeNull()
+    expect(screen.getByText('74%')).toBeInTheDocument()
 
-    expect(await screen.findByText('80%', {}, { timeout: 2_000 })).toBeInTheDocument()
+    release()
+    expect(await screen.findByText('80%')).toBeInTheDocument()
     expect(screen.queryByLabelText('Loading dashboard metrics')).toBeNull()
   })
 
