@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ApiError } from './api'
 import { useLiveRefresh } from './liveContext'
 import { fetchPendingRequests, type PendingRequests } from './requests'
@@ -21,14 +21,18 @@ const RequestsContext = createContext<RequestsContextValue | null>(null)
 export function RequestsProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<RequestsState>({ kind: 'loading' })
 
+  // Only the newest refresh may write: an older reply that arrives late is dropped.
+  const latest = useRef(0)
+
   const refresh = useCallback(async () => {
+    const mine = ++latest.current
     try {
       const data = await fetchPendingRequests()
-      setState({ kind: 'loaded', data })
+      if (mine === latest.current) setState({ kind: 'loaded', data })
     } catch (error) {
       // A 401 or 403 ended the session; ConsoleGuard is already redirecting.
       if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return
-      setState((current) => (current.kind === 'loaded' ? current : { kind: 'error' }))
+      if (mine === latest.current) setState((current) => (current.kind === 'loaded' ? current : { kind: 'error' }))
     }
   }, [])
 

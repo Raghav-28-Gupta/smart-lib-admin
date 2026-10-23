@@ -148,4 +148,77 @@ describe('Requests page', () => {
     expect(await screen.findByText('Already approved by Librarian One.')).toBeInTheDocument()
     await waitFor(() => expect(lists).toBe(2))
   })
+
+  it('keeps Approve and Decline disabled until the list has refreshed, so a second click sends nothing', async () => {
+    let lists = 0
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fetch = mockFetch({
+      'GET /admin/requests': async () => {
+        if (++lists === 1) return json(200, pending(BORROW))
+        await gate
+        return json(200, pending())
+      },
+      'POST /admin/requests/borrow/br-1/approve': () => json(200, { id: 'br-1', kind: 'borrow', status: 'approved' }),
+    })
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve' }))
+    expect(await screen.findByText("Approved. Aditi Sharma's loan of Clean Code starts now.")).toBeInTheDocument()
+
+    // The refetch is still pending, so the card is still on screen -- but it cannot be approved again.
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeDisabled()
+
+    release()
+    expect(await screen.findByText("You're all caught up")).toBeInTheDocument()
+  })
+
+  it('Escape cancels the decline dialog and puts focus back on Decline', async () => {
+    mockFetch({ 'GET /admin/requests': () => json(200, pending(ROOM)) })
+    renderPage()
+    const decline = await screen.findByRole('button', { name: 'Decline' })
+    await userEvent.click(decline)
+    expect(screen.getByRole('dialog', { name: 'Decline this request?' })).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(decline).toHaveFocus()
+  })
+
+  it('Cancel also puts focus back on Decline', async () => {
+    mockFetch({ 'GET /admin/requests': () => json(200, pending(ROOM)) })
+    renderPage()
+    const decline = await screen.findByRole('button', { name: 'Decline' })
+    await userEvent.click(decline)
+
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(decline).toHaveFocus()
+  })
+
+  it('keeps Tab and Shift+Tab inside the decline dialog', async () => {
+    mockFetch({ 'GET /admin/requests': () => json(200, pending(BORROW, ROOM)) })
+    renderPage()
+    await screen.findByText('Group Room 201')
+    await userEvent.click(screen.getAllByRole('button', { name: 'Decline' })[0])
+    const dialog = screen.getByRole('dialog', { name: 'Decline this request?' })
+    const reason = within(dialog).getByLabelText('Reason (optional)')
+    const confirm = within(dialog).getByRole('button', { name: 'Decline request' })
+    expect(reason).toHaveFocus()
+
+    await userEvent.tab() // Cancel
+    await userEvent.tab() // Decline request
+    expect(confirm).toHaveFocus()
+    await userEvent.tab()
+    expect(reason).toHaveFocus()
+
+    await userEvent.tab({ shift: true })
+    expect(confirm).toHaveFocus()
+  })
 })

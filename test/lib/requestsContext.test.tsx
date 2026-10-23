@@ -59,6 +59,49 @@ describe('RequestsProvider', () => {
     expect(screen.getByText('1 waiting')).toBeInTheDocument()
   })
 
+  it('keeps the newest list when an older refresh answers last', async () => {
+    writeToken('t')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    let olderAnswered = false
+    mockFetch({
+      'GET /admin/requests': async () => {
+        const n = ++calls
+        if (n === 2) {
+          await gate
+          olderAnswered = true
+          return json(200, ONE)
+        }
+        return json(200, n === 1 ? ONE : { requests: [], counts: { all: 0, borrow: 0, room: 0 } })
+      },
+    })
+    function Refresher() {
+      const { state, refresh } = useRequests()
+      return (
+        <>
+          <button type="button" onClick={() => void refresh()}>Refresh</button>
+          <p>{state.kind === 'loaded' ? `${waitingCount(state)} waiting` : state.kind}</p>
+        </>
+      )
+    }
+    render(<RequestsProvider><Refresher /></RequestsProvider>)
+    expect(await screen.findByText('1 waiting')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' })) // the older one, held back
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh' })) // the newer one: nothing waiting
+    expect(await screen.findByText('0 waiting')).toBeInTheDocument()
+
+    await act(async () => {
+      release()
+      await waitFor(() => expect(olderAnswered).toBe(true))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(screen.getByText('0 waiting')).toBeInTheDocument()
+  })
+
   it('shows an error when the first load fails, and Retry loads again', async () => {
     writeToken('t')
     let calls = 0

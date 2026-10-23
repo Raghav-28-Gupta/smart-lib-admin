@@ -32,9 +32,11 @@ export function useDecision(request: PendingRequest) {
           toast({ message: error instanceof ApiError ? error.message : 'Something went wrong. Try again.' })
         }
       } finally {
+        // Stay busy until the list is back: the settled request is still on
+        // screen until then, and a second click on it would only get a 409.
+        await refresh()
         inFlight.current = false
         setBusy(false)
-        void refresh()
       }
     },
     [toast, refresh],
