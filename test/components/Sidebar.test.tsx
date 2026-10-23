@@ -9,8 +9,8 @@ vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }))
 
-const renderSidebar = (onLogOut = vi.fn()) => {
-  render(<Sidebar userName="Librarian One" onLogOut={onLogOut} />)
+const renderSidebar = (onLogOut = vi.fn(), requestCount = 0) => {
+  render(<Sidebar userName="Librarian One" onLogOut={onLogOut} requestCount={requestCount} />)
   return onLogOut
 }
 
@@ -18,6 +18,18 @@ describe('Sidebar', () => {
   it('marks the Dashboard as the current page', () => {
     renderSidebar()
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('links to Requests with the number waiting', () => {
+    renderSidebar(vi.fn(), 3)
+    const link = screen.getByRole('link', { name: /Requests/ })
+    expect(link).toHaveAttribute('href', '/requests')
+    expect(link).toHaveTextContent('3')
+  })
+
+  it('shows no count when nothing is waiting', () => {
+    renderSidebar()
+    expect(screen.getByRole('link', { name: 'Requests' })).toBeInTheDocument()
   })
 
   it('shows the unbuilt sections as disabled and marked Coming soon', () => {

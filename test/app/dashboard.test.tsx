@@ -1,9 +1,29 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import DashboardPage from '@/app/(console)/dashboard/page'
+import { ToastProvider } from '@/components/Toasts'
+import { writeToken } from '@/lib/api'
+import type { LiveHandlers } from '@/lib/live'
+import { LiveProvider } from '@/lib/liveContext'
 import type { DashboardMetrics } from '@/lib/metrics'
+import type { PendingRequest, PendingRequests } from '@/lib/requests'
+import { RequestsProvider } from '@/lib/requestsContext'
 import { json, mockFetch } from '../helpers'
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
+}))
+
+const live = vi.hoisted(() => ({ handlers: null as LiveHandlers | null }))
+vi.mock('@/lib/live', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/live')>()),
+  connectLive: (handlers: LiveHandlers) => {
+    live.handlers = handlers
+    return { close: () => {} }
+  },
+}))
 
 const METRICS: DashboardMetrics = {
   utilization: {
@@ -42,26 +62,42 @@ const EMPTY: DashboardMetrics = {
   demand: { areas: [{ area: 'Silent Zone', percent: 0, busiestSlot: null }] },
 }
 
-function serve(m: DashboardMetrics, status = 200) {
+const NONE: PendingRequests = { requests: [], counts: { all: 0, borrow: 0, room: 0 } }
+
+function renderDashboard() {
+  writeToken('t')
+  return render(
+    <LiveProvider>
+      <ToastProvider>
+        <RequestsProvider>
+          <DashboardPage />
+        </RequestsProvider>
+      </ToastProvider>
+    </LiveProvider>,
+  )
+}
+
+function serve(m: DashboardMetrics, status = 200, requests: PendingRequests = NONE) {
   const reply = (body: unknown) => () => (status === 200 ? json(200, body) : json(status, { error: 'Something went wrong.' }))
   return mockFetch({
     'GET /admin/metrics/utilization': reply(m.utilization),
     'GET /admin/metrics/circulation': reply(m.circulation),
     'GET /admin/metrics/overdue': reply(m.overdue),
     'GET /admin/metrics/demand': reply(m.demand),
+    'GET /admin/requests': () => json(200, requests),
   })
 }
 
 describe('Dashboard', () => {
   it('shows the loading skeleton while the metrics load', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
-    render(<DashboardPage />)
+    renderDashboard()
     expect(screen.getByLabelText('Loading dashboard metrics')).toHaveAttribute('aria-busy', 'true')
   })
 
   it('shows all four metrics', async () => {
     serve(METRICS)
-    render(<DashboardPage />)
+    renderDashboard()
     expect(await screen.findByText('74%')).toBeInTheDocument()
     expect(screen.getByText('+6 pts vs last week')).toBeInTheDocument()
     expect(screen.getByText('142 / 118')).toBeInTheDocument()
@@ -80,7 +116,7 @@ describe('Dashboard', () => {
 
   it('offers Retry after a failure, and loads when retried', async () => {
     serve(METRICS, 500)
-    render(<DashboardPage />)
+    renderDashboard()
     expect(await screen.findByText("Couldn't load dashboard metrics")).toBeInTheDocument()
     expect(screen.getByText('Check your connection and try again.')).toBeInTheDocument()
     serve(METRICS)
@@ -90,7 +126,7 @@ describe('Dashboard', () => {
 
   it('shows the empty state before any activity', async () => {
     serve(EMPTY)
-    render(<DashboardPage />)
+    renderDashboard()
     expect(await screen.findByText('No activity recorded yet')).toBeInTheDocument()
     expect(
       screen.getByText('Utilisation, circulation and demand metrics will appear here once bookings and loans start coming in.'),
@@ -99,18 +135,85 @@ describe('Dashboard', () => {
 
   it('copes with no busiest slot and with no resources at all', async () => {
     serve({ ...METRICS, demand: { areas: [{ area: 'Silent Zone', percent: 5, busiestSlot: null }] } })
-    const { unmount } = render(<DashboardPage />)
+    const { unmount } = renderDashboard()
     expect(await screen.findByText('5% booked')).toBeInTheDocument()
     unmount()
     serve({ ...METRICS, demand: { areas: [] } })
-    render(<DashboardPage />)
+    renderDashboard()
     expect(await screen.findByText('No resources yet')).toBeInTheDocument()
   })
 
   it('leaves an ended session to the session guard instead of showing an error', async () => {
     const fetch = serve(METRICS, 401)
-    render(<DashboardPage />)
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4))
+    renderDashboard()
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5))
+    expect(screen.queryByText("Couldn't load dashboard metrics")).toBeNull()
+  })
+
+  it('lists the three oldest waiting requests, with View all', async () => {
+    const asking = (id: string, name: string, minutes: number): PendingRequest => ({
+      id,
+      kind: 'borrow',
+      student: { id: `u-${id}`, name, email: `${id}@thapar.edu` },
+      requestedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      book: { id: 'b8', title: 'Clean Code', author: 'Robert C. Martin', availableCopies: 1, totalCopies: 4 },
+    })
+    serve(METRICS, 200, {
+      requests: [asking('1', 'Aditi Sharma', 40), asking('2', 'Rohan Verma', 30), asking('3', 'Priya Nair', 20), asking('4', 'Karan Mehta', 10)],
+      counts: { all: 4, borrow: 4, room: 0 },
+    })
+    renderDashboard()
+    expect(await screen.findByText('Waiting for approval (4)')).toBeInTheDocument()
+    expect(screen.getByText('Aditi Sharma · Clean Code')).toBeInTheDocument()
+    expect(screen.getByText('Priya Nair · Clean Code')).toBeInTheDocument()
+    expect(screen.queryByText('Karan Mehta · Clean Code')).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(3)
+    expect(screen.getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/requests')
+  })
+
+  it('says when no requests are waiting', async () => {
+    serve(METRICS)
+    renderDashboard()
+    expect(await screen.findByText('No requests waiting.')).toBeInTheDocument()
+  })
+
+  it('refreshes the numbers on a metrics event without the skeleton', async () => {
+    let round = 0
+    mockFetch({
+      'GET /admin/metrics/utilization': () =>
+        json(200, { ...METRICS.utilization, today: { ...METRICS.utilization.today, percent: ++round === 1 ? 74 : 80 } }),
+      'GET /admin/metrics/circulation': () => json(200, METRICS.circulation),
+      'GET /admin/metrics/overdue': () => json(200, METRICS.overdue),
+      'GET /admin/metrics/demand': () => json(200, METRICS.demand),
+      'GET /admin/requests': () => json(200, NONE),
+    })
+    renderDashboard()
+    expect(await screen.findByText('74%')).toBeInTheDocument()
+
+    act(() => live.handlers!.onEvent({ type: 'activity', topics: ['metrics'] }))
+    expect(screen.queryByLabelText('Loading dashboard metrics')).toBeNull()
+
+    expect(await screen.findByText('80%', {}, { timeout: 2_000 })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Loading dashboard metrics')).toBeNull()
+  })
+
+  it('keeps the numbers on screen when a live refresh fails', async () => {
+    let round = 0
+    mockFetch({
+      'GET /admin/metrics/utilization': () => (++round === 1 ? json(200, METRICS.utilization) : json(500, { error: 'x' })),
+      'GET /admin/metrics/circulation': () => json(200, METRICS.circulation),
+      'GET /admin/metrics/overdue': () => json(200, METRICS.overdue),
+      'GET /admin/metrics/demand': () => json(200, METRICS.demand),
+      'GET /admin/requests': () => json(200, NONE),
+    })
+    renderDashboard()
+    expect(await screen.findByText('74%')).toBeInTheDocument()
+
+    act(() => live.handlers!.onEvent({ type: 'activity', topics: ['metrics'] }))
+    await waitFor(() => expect(round).toBe(2), { timeout: 2_000 })
+
+    expect(screen.getByText('74%')).toBeInTheDocument()
     expect(screen.queryByText("Couldn't load dashboard metrics")).toBeNull()
   })
 })

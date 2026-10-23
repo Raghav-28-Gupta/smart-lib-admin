@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ApiError, apiRequest, NETWORK_MESSAGE, readToken, SESSION_ENDED_EVENT, writeToken } from '@/lib/api'
+import { ApiError, apiRequest, endSession, NETWORK_MESSAGE, readToken, SESSION_ENDED_EVENT, writeToken } from '@/lib/api'
 import { json, mockFetch } from '../helpers'
 
 function listenForSessionEnd() {
@@ -67,6 +67,15 @@ describe('apiRequest', () => {
     mockFetch({ 'POST /auth/login': () => json(401, { error: 'no' }) })
     await expect(apiRequest('/auth/login', { method: 'POST', body: {}, auth: false })).rejects.toBeInstanceOf(ApiError)
     expect(ended.reasons).toEqual([])
+    ended.stop()
+  })
+
+  it('endSession clears the token and says why the session ended', () => {
+    writeToken('t')
+    const ended = listenForSessionEnd()
+    endSession('not-admin')
+    expect(readToken()).toBeNull()
+    expect(ended.reasons).toEqual(['not-admin'])
     ended.stop()
   })
 })

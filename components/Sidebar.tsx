@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, Calendar, DoorOpen, LayoutDashboard, Wallet, type LucideIcon } from 'lucide-react'
+import { BookOpen, Calendar, DoorOpen, Inbox, LayoutDashboard, Wallet, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { initials } from '@/lib/format'
@@ -8,20 +8,21 @@ import { initials } from '@/lib/format'
 interface Section {
   label: string
   icon: LucideIcon
-  /** Absent until the section is built (slices 2 and 3). */
+  /** Absent until the section is built (slices 4 and 5). */
   href?: string
 }
 
-// "Needs attention" is deferred with no slice, so it is left out entirely.
+// "Needs attention" (the moderation queue) is deferred with no slice, so it is left out entirely.
 const SECTIONS: Section[] = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
+  { label: 'Requests', icon: Inbox, href: '/requests' },
   { label: 'Bookings', icon: Calendar },
   { label: 'Catalogue', icon: BookOpen },
   { label: 'Resources', icon: DoorOpen },
   { label: 'Fines', icon: Wallet },
 ]
 
-export function Sidebar({ userName, onLogOut }: { userName: string; onLogOut: () => void }) {
+export function Sidebar({ userName, onLogOut, requestCount }: { userName: string; onLogOut: () => void; requestCount: number }) {
   const pathname = usePathname()
   return (
     <nav
@@ -56,6 +57,7 @@ export function Sidebar({ userName, onLogOut }: { userName: string; onLogOut: ()
           )
         }
         const active = pathname === href
+        const badge = href === '/requests' && requestCount > 0 ? requestCount : null
         return (
           <Link
             key={label}
@@ -70,6 +72,7 @@ export function Sidebar({ userName, onLogOut }: { userName: string; onLogOut: ()
           >
             <Icon size={17} strokeWidth={2.75} aria-hidden="true" />
             <span>{label}</span>
+            {badge !== null && <span className="sla-badge">{badge}</span>}
           </Link>
         )
       })}

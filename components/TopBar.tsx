@@ -1,10 +1,11 @@
 'use client'
 
-import { todayLabel } from '@/lib/format'
+import { LIBRARY_TIMEZONE, todayLabel } from '@/lib/format'
+import type { LiveStatus } from '@/lib/live'
 
-const LIBRARY_TIMEZONE = process.env.NEXT_PUBLIC_LIBRARY_TIMEZONE ?? 'Asia/Kolkata'
+const LIVE_LABELS: Record<LiveStatus, string> = { live: 'Live', connecting: 'Connecting…', reconnecting: 'Reconnecting…' }
 
-export function TopBar({ title }: { title: string }) {
+export function TopBar({ title, liveStatus = 'connecting' }: { title: string; liveStatus?: LiveStatus }) {
   return (
     <header
       style={{
@@ -15,7 +16,13 @@ export function TopBar({ title }: { title: string }) {
       <h2 style={{ margin: 0, fontSize: 19, fontFamily: 'var(--font-heading)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {title}
       </h2>
-      <span className="text-muted" style={{ fontSize: 12, flex: 'none' }}>{todayLabel(new Date(), LIBRARY_TIMEZONE)}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: 'none' }}>
+        <span className="sla-live text-muted" data-status={liveStatus}>
+          <span className="sla-live-dot" aria-hidden="true">{liveStatus === 'live' ? '●' : '○'}</span>
+          {LIVE_LABELS[liveStatus]}
+        </span>
+        <span className="text-muted" style={{ fontSize: 12 }}>{todayLabel(new Date(), LIBRARY_TIMEZONE)}</span>
+      </div>
     </header>
   )
 }

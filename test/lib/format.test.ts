@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { countDelta, initials, pointsDelta, slotRange, todayLabel, weekdayShort } from '@/lib/format'
+import { clockTime, countDelta, initials, pointsDelta, shortDay, slotRange, timeSpan, todayLabel, waitingLabel, weekdayShort } from '@/lib/format'
 
 describe('pointsDelta', () => {
   it('reports the change in percentage points against last week', () => {
@@ -50,5 +50,30 @@ describe('initials', () => {
     expect(initials('Raghav Gupta')).toBe('RG')
     expect(initials('mary jane watson')).toBe('MJ')
     expect(initials('  Aditi  ')).toBe('A')
+  })
+})
+
+describe('waitingLabel', () => {
+  it('rounds a wait down to minutes, hours or days', () => {
+    expect(waitingLabel(30_000)).toBe('less than a minute')
+    expect(waitingLabel(-5_000)).toBe('less than a minute')
+    expect(waitingLabel(12 * 60_000 + 59_000)).toBe('12 min')
+    expect(waitingLabel(3 * 3_600_000 + 59 * 60_000)).toBe('3 h')
+    expect(waitingLabel(2 * 86_400_000 + 3_600_000)).toBe('2 d')
+  })
+})
+
+describe('library times', () => {
+  const TZ = 'Asia/Kolkata'
+
+  it('shows a slot in the library time zone', () => {
+    expect(timeSpan('2026-10-22T08:30:00.000Z', '2026-10-22T09:30:00.000Z', TZ)).toBe('2–3 PM')
+    expect(timeSpan('2026-10-22T05:30:00.000Z', '2026-10-22T06:30:00.000Z', TZ)).toBe('11 AM–12 PM')
+    expect(timeSpan('2026-10-22T09:00:00.000Z', '2026-10-22T10:00:00.000Z', TZ)).toBe('2:30–3:30 PM')
+  })
+
+  it('shows a clock time and a short day', () => {
+    expect(clockTime('2026-10-22T08:45:00.000Z', TZ)).toBe('2:15 PM')
+    expect(shortDay('2026-10-22T08:30:00.000Z', TZ)).toBe('Thu, Oct 22')
   })
 })

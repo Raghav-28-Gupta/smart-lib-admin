@@ -12,4 +12,13 @@ describe('TopBar', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByText('Thursday, Oct 15, 2026')).toBeInTheDocument()
   })
+
+  it('says whether the console is live', () => {
+    const { rerender } = render(<TopBar title="Requests" liveStatus="live" />)
+    expect(screen.getByText('Live')).toBeInTheDocument()
+    rerender(<TopBar title="Requests" liveStatus="reconnecting" />)
+    expect(screen.getByText('Reconnecting…')).toBeInTheDocument()
+    rerender(<TopBar title="Requests" liveStatus="connecting" />)
+    expect(screen.getByText('Connecting…')).toBeInTheDocument()
+  })
 })

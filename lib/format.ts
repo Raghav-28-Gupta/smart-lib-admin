@@ -54,3 +54,44 @@ export function initials(name: string): string {
     .slice(0, 2)
     .toUpperCase()
 }
+
+/** The library's time zone, for every date and time the console shows. */
+export const LIBRARY_TIMEZONE = process.env.NEXT_PUBLIC_LIBRARY_TIMEZONE ?? 'Asia/Kolkata'
+
+/** "less than a minute", "12 min", "3 h", "2 d": how long something has waited, or has left. */
+export function waitingLabel(ms: number): string {
+  const minutes = Math.floor(ms / 60_000)
+  if (minutes < 1) return 'less than a minute'
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h`
+  return `${Math.floor(hours / 24)} d`
+}
+
+function clockParts(iso: string, timeZone: string): { hour: number; minute: number; meridiem: 'AM' | 'PM' } {
+  const parts = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone }).formatToParts(new Date(iso))
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return { hour: Number(part('hour')), minute: Number(part('minute')), meridiem: part('dayPeriod').toUpperCase() === 'AM' ? 'AM' : 'PM' }
+}
+
+/** "2:15 PM" in the library's time zone. */
+export function clockTime(iso: string, timeZone: string): string {
+  const { hour, minute, meridiem } = clockParts(iso, timeZone)
+  return `${hour}:${String(minute).padStart(2, '0')} ${meridiem}`
+}
+
+/** "2–3 PM", "11 AM–12 PM", "2:30–3:30 PM": a slot in the library's time zone. */
+export function timeSpan(startIso: string, endIso: string, timeZone: string): string {
+  const start = clockParts(startIso, timeZone)
+  const end = clockParts(endIso, timeZone)
+  const short = (p: { hour: number; minute: number }) =>
+    p.minute === 0 ? String(p.hour) : `${p.hour}:${String(p.minute).padStart(2, '0')}`
+  return start.meridiem === end.meridiem
+    ? `${short(start)}–${short(end)} ${end.meridiem}`
+    : `${short(start)} ${start.meridiem}–${short(end)} ${end.meridiem}`
+}
+
+/** "Thu, Oct 22" in the library's time zone. */
+export function shortDay(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone }).format(new Date(iso))
+}

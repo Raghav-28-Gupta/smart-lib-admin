@@ -44,6 +44,12 @@ export function clearToken(): void {
   }
 }
 
+/** Clears the token and tells ConsoleGuard why the session ended; it sends the user to /login. */
+export function endSession(reason: SessionEndReason): void {
+  clearToken()
+  window.dispatchEvent(new CustomEvent<SessionEndReason>(SESSION_ENDED_EVENT, { detail: reason }))
+}
+
 export async function apiRequest<T>(
   path: string,
   options: { method?: 'GET' | 'POST'; body?: unknown; auth?: boolean } = {},
@@ -76,9 +82,7 @@ export async function apiRequest<T>(
     // With a token, 401 means the session expired and 403 means the account
     // is no longer an admin (every console route is admin-only).
     if (token && (res.status === 401 || res.status === 403)) {
-      clearToken()
-      const reason: SessionEndReason = res.status === 401 ? 'expired' : 'not-admin'
-      window.dispatchEvent(new CustomEvent<SessionEndReason>(SESSION_ENDED_EVENT, { detail: reason }))
+      endSession(res.status === 401 ? 'expired' : 'not-admin')
     }
     throw new ApiError(res.status, data?.error ?? `Request failed (${res.status}).`)
   }
