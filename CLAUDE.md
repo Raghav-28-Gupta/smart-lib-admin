@@ -23,7 +23,13 @@ npm run build      # production build, includes type-checking
 - Icons: `lucide-react` at `strokeWidth={2.75}`.
 - Copy follows the spec in `docs/`; don't paraphrase user-facing strings.
 - Tests live in `test/`, mirroring the source tree. Mock `fetch` with
-  `test/helpers.ts`; mock `next/navigation` and `next/link` per test file.
+  `test/helpers.ts`; mock `next/navigation` and `next/link` per test file. Give
+  the mocked `useRouter` a stable `replace` (hoisted, not a new `vi.fn()` per
+  render): `ConsoleGuard`'s effect depends on it and would re-run forever.
+- Live updates come from `lib/liveContext.tsx`: refetch with
+  `useLiveRefresh(topics, refetch)` or react with `useLiveMessages`. Never poll.
+- Pending requests live in `RequestsProvider` (`lib/requestsContext.tsx`); read
+  them with `useRequests()` instead of fetching them again.
 - Never commit for the user: present `git add`/`git commit` commands (prefix `admin:`).
 
 <!-- BEGIN:nextjs-agent-rules -->

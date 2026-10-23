@@ -1,8 +1,10 @@
 # SmartLib — Admin Console
 
-The librarian console for SmartLib: log in with an admin account and see live
-utilisation, circulation, overdue and demand metrics. Built with Next.js and
-the Organic design system; talks only to the SmartLib API (`../backend`).
+The librarian console for SmartLib: log in with an admin account, approve or
+decline the borrow and room requests students send, and see live utilisation,
+circulation, overdue and demand metrics. Everything updates live, without
+reloading. Built with Next.js and the Organic design system; talks only to the
+SmartLib API (`../backend`).
 
 ## Setup
 
@@ -34,8 +36,16 @@ are refused.
 The API sleeps after 15 idle minutes on Render's free plan; the console waits up
 to 60 seconds and shows its loading skeleton meanwhile.
 
+## Live updates
+
+The console keeps one Server-Sent Events connection to `GET /admin/events`
+(`lib/live.ts`). Events only say what changed; the views refetch, a second
+after the last event. On every reconnect, and every 5 minutes, everything
+refetches, so a dropped connection loses nothing. The top bar shows
+`● Live` or `○ Reconnecting…`.
+
 ## Design
 
-The spec and plan for this slice are in `docs/`. Slices 2 (Bookings, Resources)
-and 3 (Catalogue, Fines, student drawer) follow; their sidebar entries show
-"Coming soon" until then.
+The specs and plans for each slice are in `docs/`. Bookings and Resources
+(slice 4) and Catalogue, Fines and the student drawer (slice 5) follow; their
+sidebar entries show "Coming soon" until then.
