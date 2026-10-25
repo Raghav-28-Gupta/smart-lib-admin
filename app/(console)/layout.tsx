@@ -47,10 +47,18 @@ function ConsoleFrame({ children }: { children: ReactNode }) {
   const liveStatus = useLiveStatus()
   const waiting = waitingCount(useRequests().state)
 
-  // The browser tab shows how many requests are waiting.
+  // The browser tab shows how many requests are waiting. Next re-applies the
+  // page's own <title> when you navigate, so the title is put back whenever it changes.
   useEffect(() => {
-    document.title = waiting > 0 ? `(${waiting}) ${APP_TITLE}` : APP_TITLE
+    const title = waiting > 0 ? `(${waiting}) ${APP_TITLE}` : APP_TITLE
+    const apply = () => {
+      if (document.title !== title) document.title = title
+    }
+    apply()
+    const observer = new MutationObserver(apply)
+    observer.observe(document.head, { childList: true, characterData: true, subtree: true })
     return () => {
+      observer.disconnect()
       document.title = APP_TITLE
     }
   }, [waiting])

@@ -48,6 +48,9 @@ describe('console shell', () => {
 
     expect(await screen.findByText('page')).toBeInTheDocument()
     await waitFor(() => expect(document.title).toBe('(2) SmartLib Admin'))
+    // Next re-applies the page's own <title> on client navigation: the count comes back.
+    document.title = 'SmartLib Admin'
+    await waitFor(() => expect(document.title).toBe('(2) SmartLib Admin'))
     expect(screen.getByRole('link', { name: /Requests/ })).toHaveTextContent('2')
     expect(screen.getByText('Connecting…')).toBeInTheDocument()
 
