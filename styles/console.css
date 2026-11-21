@@ -15,11 +15,11 @@ a { color: var(--color-accent-700) }
 a:hover { color: var(--color-accent-800) }
 
 /* Additions, not in the canvas */
-.sla-nav-btn:disabled { cursor: default; opacity: .55 }
 .sla-nav-btn:focus-visible, .sla-link-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px }
 .sla-nav-btn svg { flex: none }
-.sla-nav-text { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0 }
-.sla-soon { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; background: var(--color-neutral-100); color: var(--color-neutral-800); border-radius: 999px; padding: 1px 7px; white-space: nowrap }
+/* Catalogue copy chips: the canvas's text buttons, with a focus ring and a disabled look while a change settles. */
+.sla-chip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px }
+.sla-chip:disabled { opacity: 0.45; cursor: not-allowed }
 .sla-link-btn { background: none; border: none; padding: 0; font: inherit; font-size: 10.5px; color: var(--color-accent-700); cursor: pointer; text-decoration: underline }
 @media (prefers-reduced-motion: reduce) { .sla-skel { animation: none } }
 

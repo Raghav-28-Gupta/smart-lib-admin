@@ -44,6 +44,12 @@ npm run build      # production build, includes type-checking
   the `ApiError` message (nothing on a 401 or 403, which ends the session), and
   stays `busy` until the latest `refresh` has returned. Disable the row's buttons
   with `busy`. Wrap it per page (`useBookingAction`, `useResourceActions`).
+  `run` resolves `true` when the action succeeded and `false` when it failed or was
+  ignored as a second call; callers that do not care just `void` it. A dialog with
+  typed values (the Catalogue's book, copies, lost-on-loan and restore dialogs) stays open until `run`
+  resolves `true`, so a refusal does not throw the form away (`useDialogSubmit`).
+  `success` may be a function of the action's result when the toast depends on the
+  server's answer (Restore says whether the replacement charge was waived).
 - A list page that fetches its own data uses `useLoader(fetcher)`
   (`lib/useLoader.ts`): `{ state, refresh, retry }`, where a new fetcher or
   `retry()` shows the skeleton and `refresh()` is quiet (the rows stay on screen,

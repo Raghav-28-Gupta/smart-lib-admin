@@ -8,8 +8,7 @@ import { initials } from '@/lib/format'
 interface Section {
   label: string
   icon: LucideIcon
-  /** Absent until the section is built (slices 4 and 5). */
-  href?: string
+  href: string
 }
 
 // "Needs attention" (the moderation queue) is deferred with no slice, so it is left out entirely.
@@ -17,7 +16,7 @@ const SECTIONS: Section[] = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Requests', icon: Inbox, href: '/requests' },
   { label: 'Bookings', icon: Calendar, href: '/bookings' },
-  { label: 'Catalogue', icon: BookOpen },
+  { label: 'Catalogue', icon: BookOpen, href: '/catalogue' },
   { label: 'Resources', icon: DoorOpen, href: '/resources' },
   { label: 'Fines', icon: Wallet, href: '/fines' },
 ]
@@ -44,18 +43,6 @@ export function Sidebar({ userName, onLogOut, requestCount }: { userName: string
       </div>
 
       {SECTIONS.map(({ label, icon: Icon, href }) => {
-        if (!href) {
-          return (
-            <button key={label} type="button" className="sla-nav-btn" disabled style={{ background: 'transparent', color: 'var(--color-text)' }}>
-              <Icon size={17} strokeWidth={2.75} aria-hidden="true" />
-              {/* The tag sits under the label: beside it, it overflows the 212px sidebar. */}
-              <span className="sla-nav-text">
-                <span>{label}</span>
-                <span className="sla-soon">Coming soon</span>
-              </span>
-            </button>
-          )
-        }
         const active = pathname === href
         const badge = href === '/requests' && requestCount > 0 ? requestCount : null
         return (

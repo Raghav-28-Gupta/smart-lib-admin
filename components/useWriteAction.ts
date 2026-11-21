@@ -18,6 +18,11 @@ import { ApiError } from '@/lib/api'
  * - It is the *latest* `refresh` that runs, not the one from the render that started the write:
  *   on a page whose list depends on a query (Bookings), the librarian can change the filter or
  *   page while the write is in flight, and refetching the old query would overwrite the new one.
+ * - `run` resolves `true` when the action succeeded (after the refresh) and `false` when it failed or
+ *   was ignored as a second call. A dialog that should keep what the user typed after a refusal
+ *   stays open until it sees `true`; a caller that does not care just ignores the result.
+ * - `success` is the toast's text, or a function of what the action returned when the wording depends
+ *   on the server's answer (Restore: whether the replacement charge was waived).
  */
 export function useWriteAction(refresh: () => Promise<void>) {
   const toast = useToast()
@@ -30,13 +35,15 @@ export function useWriteAction(refresh: () => Promise<void>) {
   })
 
   const run = useCallback(
-    async (action: () => Promise<unknown>, success: string) => {
-      if (inFlight.current) return
+    async <Result,>(action: () => Promise<Result>, success: string | ((result: Result) => string)): Promise<boolean> => {
+      if (inFlight.current) return false
       inFlight.current = true
       setBusy(true)
+      let succeeded = false
       try {
-        await action()
-        toast({ message: success })
+        const result = await action()
+        succeeded = true
+        toast({ message: typeof success === 'function' ? success(result) : success })
       } catch (error) {
         if (!(error instanceof ApiError && (error.status === 401 || error.status === 403))) {
           toast({ message: error instanceof ApiError ? error.message : 'Something went wrong. Try again.' })
@@ -49,6 +56,7 @@ export function useWriteAction(refresh: () => Promise<void>) {
           setBusy(false)
         }
       }
+      return succeeded
     },
     [toast],
   )

@@ -32,35 +32,17 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Requests' })).toBeInTheDocument()
   })
 
-  it('Resources is a link; Catalogue is still Coming soon', () => {
+  it('Sidebar: every section is a link, none says Coming soon', () => {
     renderSidebar()
-    expect(screen.getByRole('link', { name: 'Resources' })).toHaveAttribute('href', '/resources')
-    expect(screen.queryByRole('button', { name: /Resources/ })).toBeNull()
-    const button = screen.getByRole('button', { name: /Catalogue/ })
-    expect(button).toBeDisabled()
-    expect(button).toHaveTextContent('Coming soon')
-  })
-
-  it('Bookings is a link, Catalogue still Coming soon', () => {
-    renderSidebar()
-    const link = screen.getByRole('link', { name: 'Bookings' })
-    expect(link).toHaveAttribute('href', '/bookings')
-    expect(link).not.toHaveTextContent('Coming soon')
-    expect(screen.queryByRole('button', { name: /Bookings/ })).toBeNull()
-    const button = screen.getByRole('button', { name: /Catalogue/ })
-    expect(button).toBeDisabled()
-    expect(button).toHaveTextContent('Coming soon')
-  })
-
-  it('Fines is a link, Catalogue still Coming soon', () => {
-    renderSidebar()
-    const link = screen.getByRole('link', { name: 'Fines' })
-    expect(link).toHaveAttribute('href', '/fines')
-    expect(link).not.toHaveTextContent('Coming soon')
-    expect(screen.queryByRole('button', { name: /Fines/ })).toBeNull()
-    const button = screen.getByRole('button', { name: /Catalogue/ })
-    expect(button).toBeDisabled()
-    expect(button).toHaveTextContent('Coming soon')
+    const sections = {
+      Dashboard: '/dashboard', Requests: '/requests', Bookings: '/bookings', Catalogue: '/catalogue', Resources: '/resources', Fines: '/fines',
+    }
+    for (const [label, href] of Object.entries(sections)) {
+      expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href)
+      expect(screen.queryByRole('button', { name: new RegExp(label) })).toBeNull()
+    }
+    expect(screen.getAllByRole('link')).toHaveLength(Object.keys(sections).length)
+    expect(screen.queryByText('Coming soon')).toBeNull()
   })
 
   it('leaves out the deferred Needs attention queue', () => {

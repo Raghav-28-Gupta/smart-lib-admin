@@ -35,6 +35,17 @@ describe('useWriteAction', () => {
     expect(result.current.busy).toBe(false)
   })
 
+  it("can word the success toast from the action's result", async () => {
+    const { result } = renderHook(() => useWriteAction(async () => {}), { wrapper })
+
+    await act(async () => {
+      await result.current.run(async () => ({ waived: false }), (reply) => (reply.waived ? 'Waived.' : 'Not waived.'))
+    })
+
+    expect(screen.getByText('Not waived.')).toBeInTheDocument()
+    expect(screen.queryByText('Waived.')).toBeNull()
+  })
+
   it("toasts the server's message unchanged when the action is refused, and still refreshes", async () => {
     const refresh = vi.fn(async () => {})
     const { result } = renderHook(() => useWriteAction(refresh), { wrapper })
@@ -79,7 +90,7 @@ describe('useWriteAction', () => {
     const refresh = vi.fn(() => refreshing.promise)
     const { result } = renderHook(() => useWriteAction(refresh), { wrapper })
 
-    let done!: Promise<void>
+    let done!: Promise<boolean>
     act(() => {
       done = result.current.run(async () => {}, 'Saved.')
     })
@@ -121,6 +132,40 @@ describe('useWriteAction', () => {
     expect(second).toHaveBeenCalledTimes(1)
   })
 
+  it('run resolves true on success and false on failure, and false for an ignored second call', async () => {
+    const refresh = vi.fn(async () => {})
+    const { result } = renderHook(() => useWriteAction(refresh), { wrapper })
+    const run = async (action: () => Promise<unknown>) => {
+      let outcome!: boolean
+      await act(async () => {
+        outcome = await result.current.run(action, 'Saved.')
+      })
+      return outcome
+    }
+
+    expect(await run(async () => {})).toBe(true)
+    // Every kind of failure is false, and each still toasts (or not, for a 401) and refreshes as before.
+    expect(await run(async () => { throw new ApiError(409, 'Already there.') })).toBe(false)
+    expect(await run(async () => { throw new TypeError('boom') })).toBe(false)
+    expect(await run(async () => { throw new ApiError(401, 'Session over.') })).toBe(false)
+    expect(refresh).toHaveBeenCalledTimes(4)
+
+    // A second call while the first is in flight does nothing and says so; the first still resolves true.
+    const release = gate()
+    let first!: Promise<boolean>
+    let second!: Promise<boolean>
+    act(() => {
+      first = result.current.run(() => release.promise, 'First.')
+      second = result.current.run(async () => {}, 'Second.')
+    })
+    await expect(second).resolves.toBe(false)
+    release.open()
+    await act(async () => {
+      await expect(first).resolves.toBe(true)
+    })
+    expect(refresh).toHaveBeenCalledTimes(5)
+  })
+
   it('refreshes with the latest refresh, not the one from when the write started', async () => {
     const release = gate()
     const atStart = vi.fn(async () => {})
@@ -130,7 +175,7 @@ describe('useWriteAction', () => {
       initialProps: { refresh: atStart },
     })
 
-    let done!: Promise<void>
+    let done!: Promise<boolean>
     act(() => {
       done = result.current.run(() => release.promise, 'Saved.')
     })
