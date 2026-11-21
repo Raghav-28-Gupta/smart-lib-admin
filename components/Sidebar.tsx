@@ -16,9 +16,9 @@ interface Section {
 const SECTIONS: Section[] = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Requests', icon: Inbox, href: '/requests' },
-  { label: 'Bookings', icon: Calendar },
+  { label: 'Bookings', icon: Calendar, href: '/bookings' },
   { label: 'Catalogue', icon: BookOpen },
-  { label: 'Resources', icon: DoorOpen },
+  { label: 'Resources', icon: DoorOpen, href: '/resources' },
   { label: 'Fines', icon: Wallet },
 ]
 

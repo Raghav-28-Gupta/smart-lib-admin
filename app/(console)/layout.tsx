@@ -11,7 +11,9 @@ import { LiveProvider, useLiveStatus } from '@/lib/liveContext'
 import { RequestsProvider, useRequests, waitingCount } from '@/lib/requestsContext'
 import { ConsoleGuard, useSession } from '@/lib/session'
 
-const PAGE_TITLES: Record<string, string> = { '/dashboard': 'Dashboard', '/requests': 'Requests' }
+const PAGE_TITLES: Record<string, string> = {
+  '/dashboard': 'Dashboard', '/requests': 'Requests', '/bookings': 'Bookings', '/resources': 'Resources',
+}
 const APP_TITLE = 'SmartLib Admin'
 
 export default function ConsoleLayout({ children }: { children: ReactNode }) {

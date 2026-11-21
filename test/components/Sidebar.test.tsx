@@ -32,9 +32,24 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Requests' })).toBeInTheDocument()
   })
 
-  it('shows the unbuilt sections as disabled and marked Coming soon', () => {
+  it('Resources is a link; Catalogue and Fines are still Coming soon', () => {
     renderSidebar()
-    for (const name of ['Bookings', 'Catalogue', 'Resources', 'Fines']) {
+    expect(screen.getByRole('link', { name: 'Resources' })).toHaveAttribute('href', '/resources')
+    expect(screen.queryByRole('button', { name: /Resources/ })).toBeNull()
+    for (const name of ['Catalogue', 'Fines']) {
+      const button = screen.getByRole('button', { name: new RegExp(name) })
+      expect(button).toBeDisabled()
+      expect(button).toHaveTextContent('Coming soon')
+    }
+  })
+
+  it('Bookings is a link, Catalogue and Fines still Coming soon', () => {
+    renderSidebar()
+    const link = screen.getByRole('link', { name: 'Bookings' })
+    expect(link).toHaveAttribute('href', '/bookings')
+    expect(link).not.toHaveTextContent('Coming soon')
+    expect(screen.queryByRole('button', { name: /Bookings/ })).toBeNull()
+    for (const name of ['Catalogue', 'Fines']) {
       const button = screen.getByRole('button', { name: new RegExp(name) })
       expect(button).toBeDisabled()
       expect(button).toHaveTextContent('Coming soon')

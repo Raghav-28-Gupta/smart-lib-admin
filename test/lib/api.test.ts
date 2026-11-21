@@ -29,6 +29,17 @@ describe('apiRequest', () => {
     expect(init.body).toBe('{"email":"a@b.c"}')
   })
 
+  it('sends PATCH with a JSON body', async () => {
+    writeToken('t1')
+    const fetch = mockFetch({ 'PATCH /admin/resources/r1': () => json(200, { ok: true }) })
+    await expect(apiRequest('/admin/resources/r1', { method: 'PATCH', body: { active: false } })).resolves.toEqual({ ok: true })
+    const init = fetch.mock.calls[0][1]!
+    expect(init.method).toBe('PATCH')
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer t1')
+    expect(new Headers(init.headers).get('Content-Type')).toBe('application/json')
+    expect(init.body).toBe('{"active":false}')
+  })
+
   it("turns an error body into an ApiError carrying the server's message", async () => {
     mockFetch({ 'POST /auth/login': () => json(401, { error: "That email and password don't match our records." }) })
     await expect(apiRequest('/auth/login', { method: 'POST', body: {}, auth: false })).rejects.toMatchObject({
