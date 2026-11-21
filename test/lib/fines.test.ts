@@ -55,13 +55,13 @@ describe('fines API', () => {
 })
 
 describe('fine writes', () => {
-  it('marks a fine paid with POST, the token and no body', async () => {
+  it('marks a fine paid with POST, the token and the amount that was shown', async () => {
     writeToken('t')
     const fetch = mockFetch({ 'POST /admin/fines/f1/paid': () => json(200, { id: 'f1', status: 'paid' }) })
-    await expect(markFinePaid('f1')).resolves.toEqual({ id: 'f1', status: 'paid' })
+    await expect(markFinePaid('f1', 150)).resolves.toEqual({ id: 'f1', status: 'paid' })
     expect(fetch.mock.calls[0][1]!.method).toBe('POST')
     expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
-    expect(fetch.mock.calls[0][1]!.body).toBeUndefined()
+    expect(fetch.mock.calls[0][1]!.body).toBe('{"amount":150}')
   })
 
   it('adjusts with POST, the amount and the trimmed reason', async () => {
@@ -86,7 +86,7 @@ describe('fine writes', () => {
       'POST /admin/fines/a%2Fb/paid': () => json(200, {}),
       'POST /admin/fines/a%2Fb/adjust': () => json(200, {}),
     })
-    await markFinePaid('a/b')
+    await markFinePaid('a/b', 1)
     await adjustFine('a/b', 1, 'x')
     expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/fines\/a%2Fb\/paid$/)
     expect(String(fetch.mock.calls[1][0])).toMatch(/\/admin\/fines\/a%2Fb\/adjust$/)
@@ -95,7 +95,7 @@ describe('fine writes', () => {
   it("passes the server's refusal through", async () => {
     writeToken('t')
     mockFetch({ 'POST /admin/fines/f1/paid': () => json(409, { error: 'This fine is already paid.' }) })
-    const error = await markFinePaid('f1').catch((e: unknown) => e)
+    const error = await markFinePaid('f1', 150).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(409)
     expect((error as ApiError).message).toBe('This fine is already paid.')

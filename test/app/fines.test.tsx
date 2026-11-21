@@ -556,13 +556,27 @@ describe('Fines page actions', () => {
     expect(posts(fetch)).toHaveLength(1)
     expect(String(posts(fetch)[0][0])).toMatch(/\/admin\/fines\/f1\/paid$/)
     expect(posts(fetch)[0][1]!.method).toBe('POST')
-    expect(posts(fetch)[0][1]!.body).toBeUndefined()
+    // The amount the librarian saw on the row goes with it, so the server can refuse a fine that changed meanwhile.
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":150}')
 
     // The list was asked for again and shows the outcome.
     const row = within(rowOf('Clean Code'))
     expect(await row.findByText('Paid')).toBeInTheDocument()
     expect(listCalls(fetch)).toHaveLength(2)
     expect(row.queryByRole('button')).toBeNull()
+  })
+
+  it('Mark paid on an adjusted fine sends its current amount, not the original', async () => {
+    const fetch = finesApi(() => json(200, page([ADJUSTED])), {
+      'POST /admin/fines/f4/paid': () => json(200, paidOf(ADJUSTED)),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Operating Systems', 'Mark paid'))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Aditi Sharma — Operating Systems, ₹50.')
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Mark paid' }))
+    await screen.findByText('Fine marked as paid.')
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":50}')
   })
 
   it('Cancel in the Mark paid dialog sends nothing', async () => {
@@ -754,6 +768,35 @@ describe('Fines page actions', () => {
     expect(await within(rowOf('Computer Networks')).findByText('Waived')).toBeInTheDocument()
     expect(listCalls(fetch)).toHaveLength(3)
     expect(within(rowOf('Computer Networks')).queryByRole('button')).toBeNull()
+  })
+
+  it(`a 409 "This fine was just changed…" on Mark paid shows the server's message and refetches`, async () => {
+    const lowered = adjustedTo(OVERDUE, 100)
+    let served = 0
+    const fetch = finesApi(() => json(200, page(++served === 1 ? [OVERDUE] : [lowered])), {
+      'POST /admin/fines/f1/paid': () => json(409, { error: 'This fine was just changed to ₹100. Check it before marking it paid.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Clean Code', 'Mark paid'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Mark paid' }))
+
+    expect(await screen.findByText('This fine was just changed to ₹100. Check it before marking it paid.')).toBeInTheDocument()
+    expect(screen.queryByText('Fine marked as paid.')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // The request carried the ₹150 the librarian saw.
+    expect(posts(fetch)).toHaveLength(1)
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":150}')
+
+    // The list is fetched again: the row shows its new amount and can still be settled.
+    const row = within(rowOf('Clean Code'))
+    expect(await row.findByText('₹100 (was ₹150)')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    await waitFor(() => expect(rowButton('Clean Code', 'Mark paid')).toBeEnabled())
+
+    // Checking it again shows the new amount in the dialog.
+    await userEvent.click(rowButton('Clean Code', 'Mark paid'))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Rohan Verma — Clean Code, ₹100.')
   })
 
   it("a 400 on adjust shows the server's message", async () => {

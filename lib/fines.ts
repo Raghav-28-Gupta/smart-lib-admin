@@ -62,9 +62,14 @@ export function fetchFines(q: { search: string; status: FineStatus | 'all'; page
 
 const finePath = (id: string, action: string) => `/admin/fines/${encodeURIComponent(id)}/${action}`
 
-/** Records payment of an outstanding or adjusted fine, once the student has paid at the desk. The server answers the updated row. */
-export function markFinePaid(id: string): Promise<unknown> {
-  return apiRequest<unknown>(finePath(id, 'paid'), { method: 'POST' })
+/**
+ * Records payment of an outstanding or adjusted fine, once the student has paid at the desk.
+ * `amount` is the fine's current amount as the librarian saw it on the row: the server applies the
+ * payment only while the fine still has that amount, and refuses (409) if it was lowered meanwhile.
+ * The server answers the updated row.
+ */
+export function markFinePaid(id: string, amount: number): Promise<unknown> {
+  return apiRequest<unknown>(finePath(id, 'paid'), { method: 'POST', body: { amount } })
 }
 
 /**
