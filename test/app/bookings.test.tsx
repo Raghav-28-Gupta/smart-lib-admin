@@ -483,3 +483,370 @@ describe('Bookings page', () => {
     expect(await screen.findByText('<b>bold</b> & more')).toBeInTheDocument()
   })
 })
+
+describe('Bookings page: cancel and reassign', () => {
+  const rowButton = (name: string, button: 'Cancel' | 'Reassign') => within(rowOf(name)).getByRole('button', { name: button })
+  const cancelledBy = (b: AdminBooking) => booking({ ...b, status: 'cancelled', cancelledBy: 'library', cancelReason: null, canManage: false })
+  const optionsRoute = (options: unknown[]) => ({ 'GET /admin/bookings/b1/reassign-options': () => json(200, options) })
+
+  /** Opens the reassign dialog on the Group Room 201 row and waits for its select. */
+  async function openReassignWithOptions() {
+    await userEvent.click(rowButton('Group Room 201', 'Reassign'))
+    const dialog = screen.getByRole('dialog', { name: 'Reassign booking' })
+    const select = await within(dialog).findByRole('combobox', { name: 'Move to' })
+    return { dialog, select }
+  }
+
+  it('Cancel and Reassign appear only on bookable rows', async () => {
+    bookingsApi(() => json(200, page(ALL)))
+    renderPage()
+    await screen.findByRole('table')
+
+    const booked = within(rowOf('Group Room 201'))
+    expect(booked.getByRole('button', { name: 'Reassign' })).toBeEnabled()
+    expect(booked.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+    // Checked in, completed, released and cancelled: the server said canManage is false.
+    for (const name of ['Reading Hall A - Seat 12', 'Silent Zone - Seat 03', 'Quiet Corner - Seat 07', 'Discussion Pod 3']) {
+      expect(within(rowOf(name)).queryByRole('button')).toBeNull()
+    }
+    expect(screen.getAllByRole('button')).toHaveLength(2)
+  })
+
+  it('cancel sends the reason, toasts, and refetches', async () => {
+    const cancelled = { ...cancelledBy(BOOKED), cancelReason: 'Room needed for an event' }
+    let served = 0
+    const fetch = bookingsApi(() => json(200, page(++served === 1 ? [BOOKED] : [cancelled])), {
+      'POST /admin/bookings/b1/cancel': () => json(200, cancelled),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this booking?' })
+    expect(dialog).toHaveTextContent(`Group Room 201 — Rohan Verma, ${dayLabel(2)} · 2–3 PM. The slot reopens immediately.`)
+    const reason = within(dialog).getByLabelText('Reason (optional)')
+    expect(reason).toHaveFocus() // the shared Dialog does not move focus in by itself
+    expect(reason).toHaveAttribute('maxlength', '300')
+    await userEvent.type(reason, '  Room needed for an event ')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel booking' }))
+
+    expect(await screen.findByText("Cancelled Rohan Verma's booking of Group Room 201.")).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+    expect(String(posts(fetch)[0][0])).toMatch(/\/admin\/bookings\/b1\/cancel$/)
+    expect(posts(fetch)[0][1]!.method).toBe('POST')
+    expect(posts(fetch)[0][1]!.body).toBe('{"reason":"Room needed for an event"}')
+
+    // The list was asked for again and shows the outcome.
+    expect(await screen.findByText('by the library')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    const row = within(rowOf('Group Room 201'))
+    expect(row.getByText('Cancelled')).toBeInTheDocument()
+    expect(row.getByText('Room needed for an event')).toBeInTheDocument()
+    expect(row.queryByRole('button')).toBeNull()
+  })
+
+  it('cancel with a blank reason sends an empty body', async () => {
+    const fetch = bookingsApi(() => json(200, page([BOOKED])), {
+      'POST /admin/bookings/b1/cancel': () => json(200, cancelledBy(BOOKED)),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this booking?' })
+    await userEvent.type(within(dialog).getByLabelText('Reason (optional)'), '   ')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel booking' }))
+
+    await screen.findByText("Cancelled Rohan Verma's booking of Group Room 201.")
+    expect(posts(fetch)).toHaveLength(1)
+    expect(posts(fetch)[0][1]!.body).toBe('{}')
+  })
+
+  it("a 409 on cancel shows the server's message and refetches", async () => {
+    const checkedIn = booking({ ...BOOKED, status: 'checked_in', canManage: false })
+    let served = 0
+    const fetch = bookingsApi(() => json(200, page(++served === 1 ? [BOOKED] : [checkedIn])), {
+      'POST /admin/bookings/b1/cancel': () => json(409, { error: 'The student already checked in.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel booking' }))
+
+    expect(await screen.findByText('The student already checked in.')).toBeInTheDocument()
+    expect(screen.queryByText("Cancelled Rohan Verma's booking of Group Room 201.")).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+
+    // The list is fetched again, so the row shows what really happened and offers nothing.
+    const row = within(rowOf('Group Room 201'))
+    expect(await row.findByText('Checked in')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    expect(row.queryByRole('button')).toBeNull()
+  })
+
+  it('the reassign dialog lists the options and confirms only with a choice', async () => {
+    const moved = booking({ ...BOOKED, resource: { id: 'r9', name: 'Group Room 202', type: 'room' }, movedFromName: 'Group Room 201' })
+    const options = gate()
+    let served = 0
+    const fetch = bookingsApi(() => json(200, page(++served === 1 ? [BOOKED] : [moved])), {
+      'GET /admin/bookings/b1/reassign-options': async () => {
+        await options.promise
+        return json(200, [ROOM_202, ROOM_203]) // a bare array
+      },
+      'POST /admin/bookings/b1/reassign': () => json(200, moved),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    expect(optionRequests(fetch)).toHaveLength(0) // nothing is asked for until a dialog opens
+
+    await userEvent.click(rowButton('Group Room 201', 'Reassign'))
+    const dialog = screen.getByRole('dialog', { name: 'Reassign booking' })
+    const confirm = () => within(dialog).getByRole('button', { name: 'Reassign' })
+    expect(dialog).toHaveTextContent("Move Rohan Verma's booking from Group Room 201 to a different resource.")
+    expect(within(dialog).getByText('Loading free resources…')).toBeInTheDocument()
+    expect(confirm()).toBeDisabled()
+    expect(optionRequests(fetch)).toHaveLength(1)
+
+    options.open()
+    const select = await within(dialog).findByRole('combobox', { name: 'Move to' })
+    expect(select).toHaveFocus()
+    expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Choose a resource…', 'Group Room 202 · 2nd Floor, East Wing', 'Group Room 203',
+    ])
+    expect(within(dialog).queryByText('Loading free resources…')).toBeNull()
+    expect(confirm()).toBeDisabled() // nothing chosen yet
+
+    await userEvent.selectOptions(select, 'Group Room 202 · 2nd Floor, East Wing')
+    expect(confirm()).toBeEnabled()
+    await userEvent.selectOptions(select, 'Choose a resource…')
+    expect(confirm()).toBeDisabled() // choosing "nothing" again turns it back off
+    await userEvent.selectOptions(select, 'Group Room 202 · 2nd Floor, East Wing')
+    await userEvent.click(confirm())
+
+    expect(await screen.findByText("Moved Rohan Verma's booking to Group Room 202.")).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+    expect(String(posts(fetch)[0][0])).toMatch(/\/admin\/bookings\/b1\/reassign$/)
+    expect(posts(fetch)[0][1]!.body).toBe('{"resourceId":"r9"}')
+    expect(optionRequests(fetch)).toHaveLength(1)
+
+    // The refetched list shows the booking in its new resource.
+    expect(await within(screen.getByRole('table')).findByText('Group Room 202')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+  })
+
+  it('the reassign dialog says when no resource is free', async () => {
+    const options = gate()
+    const fetch = bookingsApi(() => json(200, page([BOOKED])), {
+      'GET /admin/bookings/b1/reassign-options': async () => {
+        await options.promise
+        return json(200, [])
+      },
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Reassign'))
+    const dialog = screen.getByRole('dialog', { name: 'Reassign booking' })
+    // While the options load, focus is already inside, on the one control that can be used.
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+    options.open()
+    expect(await within(dialog).findByText('No other resource is free at this time')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Reassign' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(0)
+  })
+
+  it("the reassign dialog shows the server's reason when the options cannot be loaded", async () => {
+    bookingsApi(() => json(200, page([BOOKED])), {
+      'GET /admin/bookings/b1/reassign-options': () => json(409, { error: 'The student already checked in.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Reassign'))
+    const dialog = screen.getByRole('dialog', { name: 'Reassign booking' })
+
+    expect(await within(dialog).findByText('The student already checked in.')).toBeInTheDocument()
+    expect(within(dialog).queryByText('No other resource is free at this time')).toBeNull()
+    expect(within(dialog).queryByRole('combobox')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Reassign' })).toBeDisabled()
+  })
+
+  it('a 409 on reassign shows "That resource is taken at this time." and refetches', async () => {
+    const fetch = bookingsApi(() => json(200, page([BOOKED])), {
+      ...optionsRoute([ROOM_202]),
+      'POST /admin/bookings/b1/reassign': () => json(409, { error: 'That resource is taken at this time.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    const { dialog, select } = await openReassignWithOptions()
+    await userEvent.selectOptions(select, 'Group Room 202 · 2nd Floor, East Wing')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reassign' }))
+
+    expect(await screen.findByText('That resource is taken at this time.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Moved /)).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+    await waitFor(() => expect(listCalls(fetch)).toHaveLength(2))
+    await waitFor(() => expect(rowButton('Group Room 201', 'Reassign')).toBeEnabled())
+  })
+
+  it('Escape closes either dialog and returns focus to the button', async () => {
+    const fetch = bookingsApi(() => json(200, page([BOOKED])), optionsRoute([ROOM_202]))
+    renderPage()
+    await screen.findByRole('table')
+
+    const cancel = rowButton('Group Room 201', 'Cancel')
+    await userEvent.click(cancel)
+    expect(screen.getByRole('dialog', { name: 'Cancel this booking?' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(cancel).toHaveFocus()
+
+    const reassign = rowButton('Group Room 201', 'Reassign')
+    await openReassignWithOptions() // clicks the same Reassign button and waits for the select
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(reassign).toHaveFocus()
+    expect(posts(fetch)).toHaveLength(0)
+  })
+
+  it('a second click while an action is in flight sends nothing', async () => {
+    const other = booking({ id: 'b9', resource: { id: 'r8', name: 'Study Room 7', type: 'room' }, student: ADITI, ...slot(3) })
+    const posting = gate()
+    const refetching = gate()
+    let served = 0
+    const fetch = bookingsApi(
+      async () => {
+        if (++served === 1) return json(200, page([BOOKED, other]))
+        await refetching.promise
+        return json(200, page([cancelledBy(BOOKED), other]))
+      },
+      {
+        'POST /admin/bookings/b1/cancel': async () => {
+          await posting.promise
+          return json(200, cancelledBy(BOOKED))
+        },
+      },
+    )
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel booking' }))
+
+    // In flight: the dialog is gone and every action, on every row, is disabled.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    for (const name of ['Group Room 201', 'Study Room 7']) {
+      for (const label of ['Reassign', 'Cancel'] as const) expect(rowButton(name, label)).toBeDisabled()
+    }
+    await userEvent.click(rowButton('Study Room 7', 'Cancel'))
+    await userEvent.click(rowButton('Group Room 201', 'Reassign'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+
+    // The write is over, but the list is not back yet: still disabled, because the old row is still on screen.
+    posting.open()
+    expect(await screen.findByText("Cancelled Rohan Verma's booking of Group Room 201.")).toBeInTheDocument()
+    expect(rowButton('Study Room 7', 'Cancel')).toBeDisabled()
+
+    refetching.open()
+    await waitFor(() => expect(rowButton('Study Room 7', 'Cancel')).toBeEnabled())
+    expect(rowButton('Study Room 7', 'Reassign')).toBeEnabled()
+    expect(posts(fetch)).toHaveLength(1)
+  })
+
+  it('a filter changed while a cancel is in flight is the query that is refetched afterwards', async () => {
+    const posting = gate()
+    let cancelDone = false
+    // Unfiltered, the booking is bookable and then cancelled. Under the Cancelled filter, the booking
+    // that was just cancelled joins the one that already was -- but only once the write has gone through.
+    const fetch = bookingsApi(
+      (q) => {
+        if (q.get('status') === 'cancelled') return json(200, page(cancelDone ? [cancelledBy(BOOKED), CANCELLED] : [CANCELLED]))
+        return json(200, page(cancelDone ? [cancelledBy(BOOKED)] : [BOOKED]))
+      },
+      {
+        'POST /admin/bookings/b1/cancel': async () => {
+          await posting.promise
+          cancelDone = true
+          return json(200, cancelledBy(BOOKED))
+        },
+      },
+    )
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel booking' }))
+    expect(posts(fetch)).toHaveLength(1) // the cancel is in flight and held open
+
+    // The filter is not disabled meanwhile: the librarian moves on to the Cancelled filter.
+    await userEvent.selectOptions(statusSelect(), 'cancelled')
+    expect(await screen.findByText('Discussion Pod 3')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    expect(fetch.query().get('status')).toBe('cancelled')
+
+    // The write settles: what is refetched is the Cancelled filter the page shows now, not the unfiltered list.
+    posting.open()
+    expect(await screen.findByText("Cancelled Rohan Verma's booking of Group Room 201.")).toBeInTheDocument()
+    await waitFor(() => expect(listCalls(fetch)).toHaveLength(3))
+    expect(new URL(String(listCalls(fetch)[2][0])).searchParams.get('status')).toBe('cancelled')
+    expect(await screen.findByText('Group Room 201')).toBeInTheDocument() // the refetched Cancelled list
+    expect(screen.getByText('Discussion Pod 3')).toBeInTheDocument()
+    expect(statusSelect()).toHaveValue('cancelled')
+    expect(screen.getByText('1–2 of 2 bookings')).toBeInTheDocument()
+  })
+
+  it('the refetch after cancel and after reassign sends the same search, status and page as before', async () => {
+    const fetch = bookingsApi(
+      (q) => {
+        const n = Number(q.get('page'))
+        return json(200, page(rowsOfPage(n, n === 3 ? 10 : 25), 60, n))
+      },
+      {
+        'POST /admin/bookings/p26/cancel': () => json(200, {}),
+        'GET /admin/bookings/p27/reassign-options': () => json(200, [ROOM_202]),
+        'POST /admin/bookings/p27/reassign': () => json(200, {}),
+      },
+    )
+    const lastListQuery = () => new URL(String(listCalls(fetch).at(-1)![0])).searchParams
+    renderPage()
+    await screen.findByText('Seat 001')
+    fireEvent.change(searchBox(), { target: { value: 'seat' } })
+    await waitFor(() => expect(fetch.query().get('search')).toBe('seat'), { timeout: 2_000 })
+    await userEvent.selectOptions(statusSelect(), 'booked')
+    await userEvent.click(await screen.findByRole('button', { name: 'Next' }))
+    await screen.findByText('Seat 026')
+    expect(lastListQuery().get('page')).toBe('2')
+    const before = listCalls(fetch).length
+
+    const expectSameQuery = () => {
+      const q = lastListQuery()
+      expect(q.get('search')).toBe('seat')
+      expect(q.get('status')).toBe('booked')
+      expect(q.get('page')).toBe('2')
+      expect(q.get('pageSize')).toBe('25')
+    }
+
+    await userEvent.click(rowButton('Seat 026', 'Cancel'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel booking' }))
+    await screen.findByText("Cancelled Aditi Sharma's booking of Seat 026.")
+    await waitFor(() => expect(rowButton('Seat 027', 'Reassign')).toBeEnabled()) // the refetch is back
+    expect(listCalls(fetch)).toHaveLength(before + 1)
+    expectSameQuery()
+
+    await userEvent.click(rowButton('Seat 027', 'Reassign'))
+    const dialog = screen.getByRole('dialog', { name: 'Reassign booking' })
+    await userEvent.selectOptions(await within(dialog).findByRole('combobox', { name: 'Move to' }), 'Group Room 202 · 2nd Floor, East Wing')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Reassign' }))
+    await screen.findByText("Moved Aditi Sharma's booking to Group Room 202.")
+    await waitFor(() => expect(rowButton('Seat 028', 'Reassign')).toBeEnabled())
+    expect(listCalls(fetch)).toHaveLength(before + 2)
+    expectSameQuery()
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
+  })
+})

@@ -10,8 +10,19 @@ const STATUS_TAGS: Record<BookingStatus, { label: string; cls: string }> = {
   cancelled: { label: 'Cancelled', cls: 'tag-neutral' },
 }
 
-/** The canvas's bookings table. A cancelled row says who cancelled it and, if given, why. */
-export function BookingsTable({ bookings }: { bookings: AdminBooking[] }) {
+/**
+ * The canvas's bookings table. A cancelled row says who cancelled it and, if given, why.
+ * Reassign and Cancel show only where the server says the booking can still be managed;
+ * `busy` disables them all while a change is settling.
+ */
+export function BookingsTable({
+  bookings, busy, onReassign, onCancel,
+}: {
+  bookings: AdminBooking[]
+  busy: boolean
+  onReassign: (booking: AdminBooking) => void
+  onCancel: (booking: AdminBooking) => void
+}) {
   return (
     <div style={{ border: '1px solid var(--color-divider)', borderRadius: 'var(--radius-md)', overflow: 'auto' }}>
       <table className="table" style={{ width: '100%', minWidth: 640 }}>
@@ -46,8 +57,24 @@ export function BookingsTable({ bookings }: { bookings: AdminBooking[] }) {
                     </div>
                   )}
                 </td>
-                {/* Where Reassign and Cancel go, for a booking the librarian can manage (b.canManage). */}
-                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} />
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {b.canManage && (
+                    <>
+                      <button type="button" className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => onReassign(b)}>
+                        Reassign
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ padding: '4px 10px', fontSize: 12, color: 'var(--color-accent-700)' }}
+                        disabled={busy}
+                        onClick={() => onCancel(b)}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  )}
+                </td>
               </tr>
             )
           })}

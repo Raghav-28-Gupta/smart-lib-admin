@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useToast } from '@/components/Toasts'
 import { ApiError } from '@/lib/api'
 
@@ -15,11 +15,19 @@ import { ApiError } from '@/lib/api'
  * - Either way `refresh` runs afterwards, so a change someone else made shows up, and `busy`
  *   stays true until it has returned: the changed row is still the old one until then, and
  *   acting on it again would only get a 409.
+ * - It is the *latest* `refresh` that runs, not the one from the render that started the write:
+ *   on a page whose list depends on a query (Bookings), the librarian can change the filter or
+ *   page while the write is in flight, and refetching the old query would overwrite the new one.
  */
 export function useWriteAction(refresh: () => Promise<void>) {
   const toast = useToast()
   const inFlight = useRef(false)
   const [busy, setBusy] = useState(false)
+
+  const latestRefresh = useRef(refresh)
+  useEffect(() => {
+    latestRefresh.current = refresh
+  })
 
   const run = useCallback(
     async (action: () => Promise<unknown>, success: string) => {
@@ -34,12 +42,15 @@ export function useWriteAction(refresh: () => Promise<void>) {
           toast({ message: error instanceof ApiError ? error.message : 'Something went wrong. Try again.' })
         }
       } finally {
-        await refresh()
-        inFlight.current = false
-        setBusy(false)
+        try {
+          await latestRefresh.current()
+        } finally {
+          inFlight.current = false
+          setBusy(false)
+        }
       }
     },
-    [toast, refresh],
+    [toast],
   )
 
   return { busy, run }

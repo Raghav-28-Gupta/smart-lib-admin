@@ -55,6 +55,31 @@ export function fetchBookings(q: { search: string; status: BookingStatus | 'all'
   return apiRequest<BookingsPage>(`/admin/bookings?${params.toString()}`)
 }
 
+/** A resource a booking can move to: online, of the same type, and free for the booking's time. */
+export interface ReassignOption {
+  id: string
+  name: string
+  location: string | null
+  capacity: number
+}
+
+const bookingPath = (id: string, action: string) => `/admin/bookings/${encodeURIComponent(id)}/${action}`
+
+/** The reason is optional and shown to the student: blank sends none. */
+export function cancelBooking(id: string, reason: string): Promise<unknown> {
+  const trimmed = reason.trim()
+  return apiRequest<unknown>(bookingPath(id, 'cancel'), { method: 'POST', body: trimmed ? { reason: trimmed } : {} })
+}
+
+/** The server answers a bare array, in name order; empty when nothing else is free at the booking's time. */
+export function fetchReassignOptions(id: string): Promise<ReassignOption[]> {
+  return apiRequest<ReassignOption[]>(bookingPath(id, 'reassign-options'))
+}
+
+export function reassignBooking(id: string, resourceId: string): Promise<unknown> {
+  return apiRequest<unknown>(bookingPath(id, 'reassign'), { method: 'POST', body: { resourceId } })
+}
+
 /** "1–25 of 60 bookings", "51 of 51 bookings", "1 of 1 booking", "0 bookings". */
 export function bookingsRange(page: number, pageSize: number, total: number): string {
   const noun = total === 1 ? 'booking' : 'bookings'

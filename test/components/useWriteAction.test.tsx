@@ -120,4 +120,46 @@ describe('useWriteAction', () => {
     })
     expect(second).toHaveBeenCalledTimes(1)
   })
+
+  it('refreshes with the latest refresh, not the one from when the write started', async () => {
+    const release = gate()
+    const atStart = vi.fn(async () => {})
+    const latest = vi.fn(async () => {})
+    const { result, rerender } = renderHook(({ refresh }) => useWriteAction(refresh), {
+      wrapper,
+      initialProps: { refresh: atStart },
+    })
+
+    let done!: Promise<void>
+    act(() => {
+      done = result.current.run(() => release.promise, 'Saved.')
+    })
+    // A page whose list query changed meanwhile hands the hook a refresh for the new query.
+    rerender({ refresh: latest })
+
+    await act(async () => {
+      release.open()
+      await done
+    })
+    expect(latest).toHaveBeenCalledTimes(1)
+    expect(atStart).not.toHaveBeenCalled()
+  })
+
+  it('lets go of the guard even when the refresh rejects', async () => {
+    const refresh = vi.fn(async () => {
+      throw new Error('refresh failed')
+    })
+    const next = vi.fn(async () => {})
+    const { result } = renderHook(() => useWriteAction(refresh), { wrapper })
+
+    await act(async () => {
+      await result.current.run(async () => {}, 'Saved.').catch(() => {})
+    })
+    expect(result.current.busy).toBe(false)
+
+    await act(async () => {
+      await result.current.run(next, 'Next.').catch(() => {})
+    })
+    expect(next).toHaveBeenCalledTimes(1)
+  })
 })
