@@ -185,6 +185,37 @@ describe('Fines page', () => {
     expect(outstanding.queryByText(/ — /)).toBeNull()
   })
 
+  it('a paid fine that was adjusted shows "₹40 (was ₹60)" and its note without a name', async () => {
+    // Once paid, `recordedBy` names whoever recorded the payment, not whoever wrote the note.
+    const paidAfterAdjust = fine({
+      id: 'f10', item: 'Paid After Adjust', amount: 40, originalAmount: 60, status: 'paid',
+      note: 'Student showed the receipt', recordedBy: 'Kiran Rao', canSettle: false,
+    })
+    finesApi(() => json(200, page([paidAfterAdjust, NO_SHOW, ADJUSTED])))
+    renderPage()
+    await screen.findByRole('table')
+
+    const paid = within(rowOf('Paid After Adjust'))
+    expect(paid.getByText('Paid')).toHaveClass('tag', 'tag-accent-2')
+    expect(paid.getByText('₹40 (was ₹60)')).toBeInTheDocument()
+    // The note alone, under the tag: no payment recorder's name, and no "the library".
+    const note = paid.getByText('Student showed the receipt')
+    expect(note).toHaveClass('text-muted')
+    expect(paid.getByText('Paid').closest('td')).toContainElement(note)
+    expect(paid.queryByText(/Kiran Rao/)).toBeNull()
+    expect(paid.queryByText(/the library/)).toBeNull()
+    expect(paid.queryByText(/ — /)).toBeNull()
+
+    // A paid fine that was never adjusted still shows a plain amount and no note.
+    const plain = within(rowOf('Group Room 201'))
+    expect(plain.getByText('₹50')).toBeInTheDocument()
+    expect(plain.queryByText(/was ₹/)).toBeNull()
+    expect(plain.getByText('Paid').closest('td')!.querySelectorAll('.text-muted')).toHaveLength(0)
+
+    // An adjusted row still names the librarian who wrote the note.
+    expect(within(rowOf('Operating Systems')).getByText('Student showed the receipt — Meera Iyer')).toBeInTheDocument()
+  })
+
   it('shows a note as text, never as markup', async () => {
     finesApi(() => json(200, page([fine({ id: 'f9', item: 'Tricky', status: 'waived', amount: 0, note: '<b>bold</b> & more', recordedBy: 'A <i>B</i>' })])))
     renderPage()

@@ -17,9 +17,10 @@ const REASON_LABELS: Record<AdminFine['reason'], string> = {
 }
 
 /**
- * The canvas's fines table. An adjusted or waived row shows the amount it was, and under its tag the
- * librarian's reason and who recorded it. Mark paid and Waive / adjust show only where the server says
- * the fine can still be settled; `busy` disables them all while a change is settling.
+ * The canvas's fines table. A fine that was ever lowered shows the amount it was, and under its tag the
+ * librarian's reason; an adjusted or waived row adds who recorded it, a paid one shows the reason alone.
+ * Mark paid and Waive / adjust show only where the server says the fine can still be settled; `busy`
+ * disables them all while a change is settling.
  */
 export function FinesTable({
   fines, busy, onMarkPaid, onAdjust,
@@ -47,19 +48,22 @@ export function FinesTable({
           {fines.map((f) => {
             // A status or reason this console does not know (a newer server) still shows, as itself.
             const tag = STATUS_TAGS[f.status] ?? { label: f.status, cls: 'tag-neutral' }
-            const changed = f.status === 'adjusted' || f.status === 'waived'
+            // A fine that was lowered keeps its history after it is paid, so the amount shows what it was whatever its status.
+            const lowered = f.originalAmount !== f.amount
+            // The note names a librarian only while the fine is adjusted or waived: on a paid row `recordedBy` is whoever recorded the payment.
+            const noteBy = f.status === 'adjusted' || f.status === 'waived'
             return (
               // An accruing row's id is its loan's, so it can equal a fine's: the kind keeps the keys apart.
               <tr key={`${f.kind}:${f.id}`}>
                 <td>{f.student.name}</td>
                 <td className="text-muted">{REASON_LABELS[f.reason] ?? f.reason}</td>
                 <td className="text-muted">{f.item}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{changed ? `${rupees(f.amount)} (was ${rupees(f.originalAmount)})` : rupees(f.amount)}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{lowered ? `${rupees(f.amount)} (was ${rupees(f.originalAmount)})` : rupees(f.amount)}</td>
                 <td>
                   <span className={`tag ${tag.cls}`}>{tag.label}</span>
-                  {changed && f.note && (
+                  {f.note && (
                     <div className="text-muted" style={{ fontSize: 11.5, marginTop: 4, maxWidth: 260, overflowWrap: 'anywhere' }}>
-                      {`${f.note} — ${f.recordedBy ?? 'the library'}`}
+                      {noteBy ? `${f.note} — ${f.recordedBy ?? 'the library'}` : f.note}
                     </div>
                   )}
                 </td>
