@@ -61,13 +61,33 @@ const rowsOfPage = (pageNumber: number, count = 25): AdminBooking[] =>
     return booking({ id: `p${n}`, resource: { id: `rp${n}`, name: `Seat ${String(n).padStart(3, '0')}`, type: 'seat' } })
   })
 
-/** The list endpoint: `answer` sees the query of the request being served. */
-function bookingsApi(answer: (query: URLSearchParams) => Response | Promise<Response>) {
+/** The list endpoint: `answer` sees the query of the request being served. `routes` adds the other endpoints. */
+function bookingsApi(
+  answer: (query: URLSearchParams) => Response | Promise<Response>,
+  routes: Record<string, () => Response | Promise<Response>> = {},
+) {
   let fetch!: ReturnType<typeof mockFetch>
   const queryOf = (index: number) => new URL(String(fetch.mock.calls[index][0])).searchParams
-  fetch = mockFetch({ 'GET /admin/bookings': () => answer(queryOf(fetch.mock.calls.length - 1)) })
+  fetch = mockFetch({ 'GET /admin/bookings': () => answer(queryOf(fetch.mock.calls.length - 1)), ...routes })
   return Object.assign(fetch, { query: (index = fetch.mock.calls.length - 1) => queryOf(index) })
 }
+
+/** The writes sent so far (anything but a GET), and the list requests among all calls. */
+const posts = (fetch: ReturnType<typeof mockFetch>) => fetch.mock.calls.filter(([, init]) => init?.method !== undefined && init.method !== 'GET')
+const listCalls = (fetch: ReturnType<typeof mockFetch>) => fetch.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/admin/bookings')
+const optionRequests = (fetch: ReturnType<typeof mockFetch>) => fetch.mock.calls.filter(([url]) => String(url).endsWith('/reassign-options'))
+
+/** A promise the test opens by hand. */
+function gate() {
+  let open!: () => void
+  const promise = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { promise, open }
+}
+
+const ROOM_202 = { id: 'r9', name: 'Group Room 202', location: '2nd Floor, East Wing', capacity: 6 }
+const ROOM_203 = { id: 'r10', name: 'Group Room 203', location: null, capacity: 4 }
 
 /** 60 bookings in three pages of 25, 25 and 10. */
 const threePages = () =>

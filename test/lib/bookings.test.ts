@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, writeToken } from '@/lib/api'
-import { BOOKINGS_PAGE_SIZE, bookingsRange, fetchBookings, type BookingsPage } from '@/lib/bookings'
+import {
+  BOOKINGS_PAGE_SIZE, bookingsRange, cancelBooking, fetchBookings, fetchReassignOptions, reassignBooking,
+  type BookingsPage, type ReassignOption,
+} from '@/lib/bookings'
 import { json, mockFetch } from '../helpers'
 
 const EMPTY: BookingsPage = { bookings: [], total: 0, page: 1, pageSize: 25 }
@@ -56,6 +59,60 @@ describe('bookings API', () => {
     expect(error).toBeInstanceOf(ApiError)
     expect((error as ApiError).status).toBe(400)
     expect((error as ApiError).message).toBe('Search is too long.')
+  })
+})
+
+const OPTION: ReassignOption = { id: 'r9', name: 'Group Room 202', location: '2nd Floor, East Wing', capacity: 6 }
+
+describe('booking actions API', () => {
+  it('cancels with POST, the token and the trimmed reason', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/bookings/b1/cancel': () => json(200, { id: 'b1' }) })
+    await expect(cancelBooking('b1', '  Room needed for an event ')).resolves.toEqual({ id: 'b1' })
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(fetch.mock.calls[0][1]!.body).toBe('{"reason":"Room needed for an event"}')
+  })
+
+  it('cancels with an empty body when the reason is blank', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/bookings/b1/cancel': () => json(200, { id: 'b1' }) })
+    await cancelBooking('b1', '')
+    await cancelBooking('b1', '   ')
+    expect(fetch.mock.calls[0][1]!.body).toBe('{}')
+    expect(fetch.mock.calls[1][1]!.body).toBe('{}')
+  })
+
+  it('reads the reassign options as a bare array', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'GET /admin/bookings/b1/reassign-options': () => json(200, [OPTION]) })
+    await expect(fetchReassignOptions('b1')).resolves.toEqual([OPTION])
+    expect(fetch.mock.calls[0][1]!.method).toBe('GET')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+  })
+
+  it('reassigns with POST and only the resource id', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/bookings/b1/reassign': () => json(200, { id: 'b1' }) })
+    await expect(reassignBooking('b1', 'r9')).resolves.toEqual({ id: 'b1' })
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(fetch.mock.calls[0][1]!.body).toBe('{"resourceId":"r9"}')
+  })
+
+  it('encodes the booking id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/bookings/a%2Fb/cancel': () => json(200, {}) })
+    await cancelBooking('a/b', '')
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/bookings\/a%2Fb\/cancel$/)
+  })
+
+  it("passes the server's refusal through", async () => {
+    writeToken('t')
+    mockFetch({ 'POST /admin/bookings/b1/reassign': () => json(409, { error: 'That resource is taken at this time.' }) })
+    const error = await reassignBooking('b1', 'r9').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(409)
+    expect((error as ApiError).message).toBe('That resource is taken at this time.')
   })
 })
 

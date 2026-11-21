@@ -1,46 +1,18 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
-import { useToast } from '@/components/Toasts'
-import { ApiError } from '@/lib/api'
+import { useWriteAction } from '@/components/useWriteAction'
 import { approveRequest, declineRequest, type PendingRequest } from '@/lib/requests'
 import { useRequests } from '@/lib/requestsContext'
 import { approvedToast, declinedToast } from './requestText'
 
 /**
- * Approve and decline for one request. A second click while a decision is in
- * flight sends nothing. Either way the queue is refetched afterwards, so a
- * request someone else settled disappears, with the server's 409 as a toast.
+ * Approve and decline for one request, through the console's shared write action: a second
+ * click while a decision is in flight sends nothing, and either way the queue is refetched
+ * afterwards, so a request someone else settled disappears, with the server's 409 as a toast.
  */
 export function useDecision(request: PendingRequest) {
-  const toast = useToast()
   const { refresh } = useRequests()
-  const inFlight = useRef(false)
-  const [busy, setBusy] = useState(false)
-
-  const run = useCallback(
-    async (action: () => Promise<unknown>, success: string) => {
-      if (inFlight.current) return
-      inFlight.current = true
-      setBusy(true)
-      try {
-        await action()
-        toast({ message: success })
-      } catch (error) {
-        // A 401 or 403 ended the session; ConsoleGuard is already redirecting.
-        if (!(error instanceof ApiError && (error.status === 401 || error.status === 403))) {
-          toast({ message: error instanceof ApiError ? error.message : 'Something went wrong. Try again.' })
-        }
-      } finally {
-        // Stay busy until the list is back: the settled request is still on
-        // screen until then, and a second click on it would only get a 409.
-        await refresh()
-        inFlight.current = false
-        setBusy(false)
-      }
-    },
-    [toast, refresh],
-  )
+  const { busy, run } = useWriteAction(refresh)
 
   return {
     busy,
