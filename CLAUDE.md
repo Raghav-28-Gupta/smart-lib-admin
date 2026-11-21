@@ -50,6 +50,10 @@ npm run build      # production build, includes type-checking
   even if it fails). Keep the fetcher stable: a module-level function, or
   `useCallback` over the query it closes over, or it refetches on every render.
   Pair it with `useLiveRefresh(topics, () => void refresh())`.
+- A list page with search, a status filter and paging uses `useListQuery(fetchPage, rowCount)`
+  (`lib/useListQuery.ts`) instead of wiring `useLoader` itself: it owns the debounced search, the
+  status, the page, `clearFilters`, `pastEnd` (the page asked for is gone) and the loader's
+  `{ state, refresh, retry }`. Bookings and Fines use it; leave `Status` out for a search-only page.
 - The loading, error, no-match and empty blocks of a list page come from the
   shared `components/StateBlocks.tsx`; each page only words them (see
   `ResourcesStates.tsx`, `BookingsStates.tsx`).

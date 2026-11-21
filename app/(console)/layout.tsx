@@ -12,7 +12,7 @@ import { RequestsProvider, useRequests, waitingCount } from '@/lib/requestsConte
 import { ConsoleGuard, useSession } from '@/lib/session'
 
 const PAGE_TITLES: Record<string, string> = {
-  '/dashboard': 'Dashboard', '/requests': 'Requests', '/bookings': 'Bookings', '/resources': 'Resources',
+  '/dashboard': 'Dashboard', '/requests': 'Requests', '/bookings': 'Bookings', '/resources': 'Resources', '/fines': 'Fines',
 }
 const APP_TITLE = 'SmartLib Admin'
 

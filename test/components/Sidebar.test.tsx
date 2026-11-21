@@ -32,28 +32,35 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Requests' })).toBeInTheDocument()
   })
 
-  it('Resources is a link; Catalogue and Fines are still Coming soon', () => {
+  it('Resources is a link; Catalogue is still Coming soon', () => {
     renderSidebar()
     expect(screen.getByRole('link', { name: 'Resources' })).toHaveAttribute('href', '/resources')
     expect(screen.queryByRole('button', { name: /Resources/ })).toBeNull()
-    for (const name of ['Catalogue', 'Fines']) {
-      const button = screen.getByRole('button', { name: new RegExp(name) })
-      expect(button).toBeDisabled()
-      expect(button).toHaveTextContent('Coming soon')
-    }
+    const button = screen.getByRole('button', { name: /Catalogue/ })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('Coming soon')
   })
 
-  it('Bookings is a link, Catalogue and Fines still Coming soon', () => {
+  it('Bookings is a link, Catalogue still Coming soon', () => {
     renderSidebar()
     const link = screen.getByRole('link', { name: 'Bookings' })
     expect(link).toHaveAttribute('href', '/bookings')
     expect(link).not.toHaveTextContent('Coming soon')
     expect(screen.queryByRole('button', { name: /Bookings/ })).toBeNull()
-    for (const name of ['Catalogue', 'Fines']) {
-      const button = screen.getByRole('button', { name: new RegExp(name) })
-      expect(button).toBeDisabled()
-      expect(button).toHaveTextContent('Coming soon')
-    }
+    const button = screen.getByRole('button', { name: /Catalogue/ })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('Coming soon')
+  })
+
+  it('Fines is a link, Catalogue still Coming soon', () => {
+    renderSidebar()
+    const link = screen.getByRole('link', { name: 'Fines' })
+    expect(link).toHaveAttribute('href', '/fines')
+    expect(link).not.toHaveTextContent('Coming soon')
+    expect(screen.queryByRole('button', { name: /Fines/ })).toBeNull()
+    const button = screen.getByRole('button', { name: /Catalogue/ })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('Coming soon')
   })
 
   it('leaves out the deferred Needs attention queue', () => {

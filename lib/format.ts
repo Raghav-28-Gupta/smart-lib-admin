@@ -95,3 +95,20 @@ export function timeSpan(startIso: string, endIso: string, timeZone: string): st
 export function shortDay(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone }).format(new Date(iso))
 }
+
+/** "₹150": a whole-rupee amount. */
+export function rupees(amount: number): string {
+  return `₹${amount}`
+}
+
+/**
+ * Which rows a page of a list shows: "1–25 of 60 fines", "51 of 51 fines" (the last page holds
+ * one row), "1 of 1 fine", "0 fines". `noun` is the singular and the plural.
+ */
+export function pageRange(page: number, pageSize: number, total: number, noun: [singular: string, plural: string]): string {
+  const word = total === 1 ? noun[0] : noun[1]
+  if (total === 0) return `0 ${word}`
+  const from = (page - 1) * pageSize + 1
+  const to = Math.min(page * pageSize, total)
+  return `${from === to ? from : `${from}–${to}`} of ${total} ${word}`
+}

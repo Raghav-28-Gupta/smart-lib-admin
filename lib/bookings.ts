@@ -1,4 +1,5 @@
 import { apiRequest } from './api'
+import { pageRange } from './format'
 
 /**
  * The status the library sees, derived by the server at read time (a booked row whose
@@ -82,9 +83,5 @@ export function reassignBooking(id: string, resourceId: string): Promise<unknown
 
 /** "1–25 of 60 bookings", "51 of 51 bookings", "1 of 1 booking", "0 bookings". */
 export function bookingsRange(page: number, pageSize: number, total: number): string {
-  const noun = total === 1 ? 'booking' : 'bookings'
-  if (total === 0) return `0 ${noun}`
-  const from = (page - 1) * pageSize + 1
-  const to = Math.min(page * pageSize, total)
-  return `${from === to ? from : `${from}–${to}`} of ${total} ${noun}`
+  return pageRange(page, pageSize, total, ['booking', 'bookings'])
 }

@@ -1,63 +1,26 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { BookingsTable } from '@/components/bookings/BookingsTable'
 import { BookingsEmpty, BookingsError, BookingsFilterEmpty, BookingsSkeleton } from '@/components/bookings/BookingsStates'
 import { CancelBookingDialog } from '@/components/bookings/CancelBookingDialog'
-import { Pager } from '@/components/bookings/Pager'
 import { ReassignDialog } from '@/components/bookings/ReassignDialog'
 import { useBookingAction } from '@/components/bookings/useBookingAction'
-import { BOOKING_STATUS_FILTERS, bookingsRange, fetchBookings, type AdminBooking, type BookingStatus } from '@/lib/bookings'
+import { Pager } from '@/components/Pager'
+import { BOOKING_STATUS_FILTERS, bookingsRange, fetchBookings, type AdminBooking, type BookingsPage as BookingsResponse, type BookingStatus } from '@/lib/bookings'
 import { useLiveRefresh } from '@/lib/liveContext'
-import { useLoader } from '@/lib/useLoader'
+import { useListQuery } from '@/lib/useListQuery'
 
-type StatusFilter = BookingStatus | 'all'
 type OpenDialog = null | { kind: 'cancel' | 'reassign'; booking: AdminBooking }
 
-/** How long typing must pause before the search is sent. */
-const SEARCH_DEBOUNCE_MS = 300
-
 export default function BookingsPage() {
-  // What the box shows, and what was last sent: the box never waits, the request does.
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<StatusFilter>('all')
-  const [page, setPage] = useState(1)
-
-  useEffect(() => {
-    const next = searchInput.trim()
-    if (next === search) return // already sent, or only spaces
-    const timer = setTimeout(() => {
-      setSearch(next)
-      setPage(1)
-    }, SEARCH_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
-  }, [searchInput, search])
-
-  // A new query shows the skeleton; a live refresh asks the same query again, quietly.
-  const fetcher = useCallback(() => fetchBookings({ search, status, page }), [search, status, page])
-  const { state, refresh, retry } = useLoader(fetcher)
+  const { state, data, refresh, retry, searchInput, setSearchInput, status, setStatus, setPage, pastEnd, filtered, clearFilters } =
+    useListQuery<BookingsResponse, BookingStatus>(fetchBookings, (reply) => reply.bookings.length)
   useLiveRefresh(['bookings'], () => void refresh())
 
   const [dialog, setDialog] = useState<OpenDialog>(null)
   const actions = useBookingAction(refresh)
   const close = useCallback(() => setDialog(null), [])
-
-  const data = state.kind === 'loaded' ? state.data : null
-  const lastPage = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1
-  // Rows were removed while the librarian was on the last page: the page they were on is gone.
-  const pastEnd = data !== null && data.bookings.length === 0 && data.total > 0 && page > lastPage
-  useEffect(() => {
-    if (pastEnd) setPage(lastPage)
-  }, [pastEnd, lastPage])
-
-  const filtered = search !== '' || status !== 'all'
-  const clearFilters = () => {
-    setSearchInput('')
-    setSearch('')
-    setStatus('all')
-    setPage(1)
-  }
 
   return (
     <>
@@ -76,10 +39,7 @@ export default function BookingsPage() {
           aria-label="Filter by status"
           style={{ maxWidth: 170 }}
           value={status}
-          onChange={(e) => {
-            setStatus(e.target.value as StatusFilter)
-            setPage(1)
-          }}
+          onChange={(e) => setStatus(e.target.value as BookingStatus | 'all')}
         >
           {BOOKING_STATUS_FILTERS.map((f) => (
             <option key={f.value} value={f.value}>{f.label}</option>

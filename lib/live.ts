@@ -4,7 +4,7 @@
 // refetch (lib/liveContext.tsx), so a dropped connection loses nothing.
 import { apiBaseUrl, endSession, readToken } from './api'
 
-export type LiveTopic = 'requests' | 'metrics' | 'bookings' | 'resources'
+export type LiveTopic = 'requests' | 'metrics' | 'bookings' | 'resources' | 'fines' | 'catalogue' | 'students'
 export type LiveEventType =
   | 'request.created'
   | 'request.decided'
@@ -12,6 +12,10 @@ export type LiveEventType =
   | 'request.cancelled'
   | 'booking.changed'
   | 'resource.changed'
+  | 'fine.changed'
+  | 'catalogue.changed'
+  | 'student.changed'
+  | 'loan.changed'
   | 'activity'
 
 export interface LiveEvent {

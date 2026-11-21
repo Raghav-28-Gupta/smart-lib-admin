@@ -19,7 +19,7 @@ const SECTIONS: Section[] = [
   { label: 'Bookings', icon: Calendar, href: '/bookings' },
   { label: 'Catalogue', icon: BookOpen },
   { label: 'Resources', icon: DoorOpen, href: '/resources' },
-  { label: 'Fines', icon: Wallet },
+  { label: 'Fines', icon: Wallet, href: '/fines' },
 ]
 
 export function Sidebar({ userName, onLogOut, requestCount }: { userName: string; onLogOut: () => void; requestCount: number }) {

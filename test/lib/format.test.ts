@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { clockTime, countDelta, initials, pointsDelta, shortDay, slotRange, timeSpan, todayLabel, waitingLabel, weekdayShort } from '@/lib/format'
+import {
+  clockTime, countDelta, initials, pageRange, pointsDelta, rupees, shortDay, slotRange, timeSpan, todayLabel, waitingLabel, weekdayShort,
+} from '@/lib/format'
 
 describe('pointsDelta', () => {
   it('reports the change in percentage points against last week', () => {
@@ -75,5 +77,36 @@ describe('library times', () => {
   it('shows a clock time and a short day', () => {
     expect(clockTime('2026-10-22T08:45:00.000Z', TZ)).toBe('2:15 PM')
     expect(shortDay('2026-10-22T08:30:00.000Z', TZ)).toBe('Thu, Oct 22')
+  })
+})
+
+describe('rupees', () => {
+  it('writes a whole-rupee amount with the rupee sign', () => {
+    expect(rupees(150)).toBe('₹150')
+    expect(rupees(0)).toBe('₹0')
+    expect(rupees(10)).toBe('₹10')
+  })
+})
+
+describe('pageRange', () => {
+  const FINES: [string, string] = ['fine', 'fines']
+
+  it('words the first, a middle and a short last page', () => {
+    expect(pageRange(1, 25, 60, FINES)).toBe('1–25 of 60 fines')
+    expect(pageRange(2, 25, 60, FINES)).toBe('26–50 of 60 fines')
+    expect(pageRange(3, 25, 60, FINES)).toBe('51–60 of 60 fines')
+  })
+
+  it('is singular for one and says "0 fines" for none', () => {
+    expect(pageRange(1, 25, 1, FINES)).toBe('1 of 1 fine')
+    expect(pageRange(1, 25, 0, FINES)).toBe('0 fines')
+  })
+
+  it('does not repeat a number when the last page holds one row', () => {
+    expect(pageRange(3, 25, 51, FINES)).toBe('51 of 51 fines')
+  })
+
+  it('takes any noun', () => {
+    expect(pageRange(1, 25, 60, ['student', 'students'])).toBe('1–25 of 60 students')
   })
 })
