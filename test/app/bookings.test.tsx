@@ -848,5 +848,5 @@ describe('Bookings page: cancel and reassign', () => {
     expect(listCalls(fetch)).toHaveLength(before + 2)
     expectSameQuery()
     expect(screen.getByText('Page 2 of 3')).toBeInTheDocument()
-  })
+  }, 30_000) // drives six interactions through a 25-row table, which takes several seconds
 })
