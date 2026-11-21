@@ -30,6 +30,29 @@ npm run build      # production build, includes type-checking
   `useLiveRefresh(topics, refetch)` or react with `useLiveMessages`. Never poll.
 - Pending requests live in `RequestsProvider` (`lib/requestsContext.tsx`); read
   them with `useRequests()` instead of fetching them again.
+- Live topics (`LiveTopic` in `lib/live.ts`) are `requests`, `metrics`,
+  `bookings` and `resources`. The Bookings page refetches on `bookings`
+  (`booking.changed`), the Resources page on `resources` (`resource.changed`).
+- `apiRequest` takes `GET`, `POST` and `PATCH`.
+- Dialogs use the shared `components/Dialog.tsx`: backdrop, `role="dialog"`,
+  Escape to cancel, Tab kept inside, focus handed back to the opener. It does
+  not move focus into itself: `autoFocus` the first field, or the primary button
+  when there is nothing to fill in.
+- Every write action goes through `useWriteAction` (`components/useWriteAction.ts`),
+  never a bare `apiRequest` in a handler: `run(action, successMessage)` ignores a
+  second call while one is in flight (a ref guard), toasts the success message or
+  the `ApiError` message (nothing on a 401 or 403, which ends the session), and
+  stays `busy` until the latest `refresh` has returned. Disable the row's buttons
+  with `busy`. Wrap it per page (`useBookingAction`, `useResourceActions`).
+- A list page that fetches its own data uses `useLoader(fetcher)`
+  (`lib/useLoader.ts`): `{ state, refresh, retry }`, where a new fetcher or
+  `retry()` shows the skeleton and `refresh()` is quiet (the rows stay on screen,
+  even if it fails). Keep the fetcher stable: a module-level function, or
+  `useCallback` over the query it closes over, or it refetches on every render.
+  Pair it with `useLiveRefresh(topics, () => void refresh())`.
+- The loading, error, no-match and empty blocks of a list page come from the
+  shared `components/StateBlocks.tsx`; each page only words them (see
+  `ResourcesStates.tsx`, `BookingsStates.tsx`).
 - Never commit for the user: present `git add`/`git commit` commands (prefix `admin:`).
 
 <!-- BEGIN:nextjs-agent-rules -->
