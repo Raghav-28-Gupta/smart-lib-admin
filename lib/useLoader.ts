@@ -29,7 +29,7 @@ export function useLoader<T>(fetcher: () => Promise<T>) {
       } catch (error) {
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return
         // Data already on screen outlives a failed refresh; anything else is an error.
-        if (mine === latest.current) setState((current) => ({ kind: 'error' }))
+        if (mine === latest.current) setState((current) => (current.kind === 'loaded' ? current : { kind: 'error' }))
       }
     },
     [fetcher],

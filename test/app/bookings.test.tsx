@@ -170,8 +170,9 @@ describe('Bookings page', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(searchBox()).toHaveValue('ana') // the box itself never waits
 
+    // 301 ms after the last keystroke, with no real waiting in between: the request is out.
     await act(async () => void vi.advanceTimersByTime(2))
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    expect(fetch).toHaveBeenCalledTimes(2)
     expect(fetch.query().get('search')).toBe('ana')
     expect(fetch.query().get('page')).toBe('1')
     expect(fetch.query().get('pageSize')).toBe('25')
