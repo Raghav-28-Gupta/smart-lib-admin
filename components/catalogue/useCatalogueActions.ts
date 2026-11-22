@@ -24,9 +24,12 @@ export function useCatalogueActions(refresh: () => Promise<void>) {
     addCopies: (book: AdminBook, count: number) =>
       run(() => addCopies(book.id, count), count === 1 ? '1 copy added.' : `${count} copies added.`),
     maintenance: (copy: AdminCopy) => run(() => markCopyMaintenance(copy.id), 'Copy marked under maintenance.'),
-    /** A charge goes only with a copy a student has on loan. */
+    /**
+     * A charge goes only with a copy a student has on loan, and then with that student's id as the dialog showed
+     * it (`copy` is the dialog's snapshot, not the live list), so the server refuses if someone else has it now.
+     */
     lost: (copy: AdminCopy, replacementCharge?: number) =>
-      run(() => markCopyLost(copy.id, replacementCharge), 'Copy marked as lost.'),
+      run(() => markCopyLost(copy.id, replacementCharge, copy.borrower?.id), 'Copy marked as lost.'),
     /** `waiveReplacementCharge` is whether the librarian ticked the box; the toast says when the server could not honour it. */
     restore: (copy: AdminCopy, waiveReplacementCharge: boolean) =>
       run(

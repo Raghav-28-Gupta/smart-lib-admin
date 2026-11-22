@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import CataloguePage from '@/app/(console)/catalogue/page'
 import { ToastProvider } from '@/components/Toasts'
@@ -8,6 +9,10 @@ import type { AdminBook, AdminCopy, BooksPage } from '@/lib/catalogue'
 import type { LiveEvent, LiveHandlers } from '@/lib/live'
 import { LiveProvider } from '@/lib/liveContext'
 import { json, mockFetch } from '../helpers'
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
+}))
 
 const live = vi.hoisted(() => ({ handlers: null as LiveHandlers | null }))
 vi.mock('@/lib/live', async (importOriginal) => ({
@@ -198,7 +203,10 @@ describe('Catalogue page', () => {
     // Shown in the library's day (20:30 UTC is already the next morning there), with the middle dot.
     const loaned = within(chipOf('CS-ALG-01'))
     expect(loaned.getByText('On loan')).toBeInTheDocument()
-    expect(loaned.getByText(`Rohan Verma · due ${dayLabel(4)}`)).toBeInTheDocument()
+    expect(chipOf('CS-ALG-01')).toHaveTextContent(`Rohan Verma · due ${dayLabel(4)}`)
+    // The borrower's name links to the student's page, opened from the Catalogue; the due date stays plain text.
+    expect(loaned.getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/s2?from=catalogue')
+    expect(loaned.getByText(`· due ${dayLabel(4)}`, { exact: false })).not.toHaveAttribute('href')
     // Only an on-loan copy has the line.
     for (const barcode of ['CS-ALG-02', 'CS-ALG-03', 'CS-ALG-04', 'CS-ALG-05']) {
       expect(chipOf(barcode).textContent).not.toMatch(/due|·/)
@@ -206,6 +214,19 @@ describe('Catalogue page', () => {
     // A copy marked borrowed with no open loan (seed data) shows just the tag, and its one action.
     expect(within(chipOf('SEED-01')).getByText('On loan')).toBeInTheDocument()
     expect(chipOf('SEED-01').textContent).toBe('SEED-01On loanLost')
+    expect(within(chipOf('SEED-01')).queryByRole('link')).toBeNull()
+  })
+
+  it('an on-loan chip with no due date still links the borrower', async () => {
+    const undated = book({
+      id: 'b6', title: 'Undated',
+      copies: [copy({ id: 'c12', barcode: 'UD-01', status: 'on_loan', borrower: ROHAN })],
+    })
+    booksApi(() => json(200, page([undated])))
+    renderPage()
+    await screen.findByRole('article')
+    expect(within(chipOf('UD-01')).getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/s2?from=catalogue')
+    expect(chipOf('UD-01').textContent).toBe('UD-01On loanRohan VermaLost')
   })
 
   it('shows the borrower as text, never as markup', async () => {
@@ -216,7 +237,9 @@ describe('Catalogue page', () => {
       })])),
     )
     renderPage()
-    expect(await screen.findByText(`A <b>B</b> · due ${dayLabel(3)}`)).toBeInTheDocument()
+    const link = await screen.findByRole('link', { name: 'A <b>B</b>' })
+    expect(chipOf('TR-01')).toHaveTextContent(`A <b>B</b> · due ${dayLabel(3)}`)
+    expect(link.querySelector('b')).toBeNull()
     expect(chipOf('TR-01').querySelector('b')).toBeNull()
   })
 
@@ -1194,7 +1217,7 @@ describe('Catalogue page copy actions', () => {
     expect(writes(fetch)).toHaveLength(1)
     expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/copies\/c1\/lost$/)
     expect(writes(fetch)[0][1]!.method).toBe('POST')
-    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":250}')
+    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":250,"borrowerId":"s2"}')
   })
 
   it('lost on loan with a charge of 0 posts 0', async () => {
@@ -1206,7 +1229,7 @@ describe('Catalogue page copy actions', () => {
     await userEvent.type(chargeBox(dialog), '0')
     await userEvent.click(confirmOf(dialog, 'Mark as lost'))
     await screen.findByText('Copy marked as lost.')
-    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":0}')
+    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":0,"borrowerId":"s2"}')
   })
 
   it('a copy marked borrowed with no open loan is lost with a plain confirmation and no charge', async () => {
@@ -1354,7 +1377,62 @@ describe('Catalogue page copy actions', () => {
     expect(await screen.findByText('Copy marked as lost.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(writes(fetch)).toHaveLength(2)
-    expect(writes(fetch)[1][1]!.body).toBe('{"replacementCharge":250}')
+    expect(writes(fetch)[1][1]!.body).toBe('{"replacementCharge":250,"borrowerId":"s2"}')
+  })
+
+  it(`a 409 "This copy's borrower has changed…" on lost-on-loan keeps the dialog, toasts the message and refetches`, async () => {
+    const CHANGED = "This copy's borrower has changed. Check it before marking it lost."
+    let posts = 0
+    const fetch = booksApi(() => json(200, page([ALGORITHMS])), {
+      'POST /admin/copies/c1/lost': () => {
+        posts += 1
+        return posts === 1 ? json(409, { error: CHANGED }) : json(200, ALGORITHMS)
+      },
+    })
+    renderPage()
+    await screen.findByRole('article')
+    await userEvent.click(chipButton('CS-ALG-01', 'Lost'))
+    const dialog = dialogOf('Mark this copy as lost?')
+    await userEvent.type(chargeBox(dialog), '250')
+    await userEvent.click(confirmOf(dialog, 'Mark as lost'))
+
+    expect(await screen.findByText(CHANGED)).toBeInTheDocument()
+    expect(screen.queryByText('Copy marked as lost.')).toBeNull()
+    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":250,"borrowerId":"s2"}')
+    await waitFor(() => expect(listCalls(fetch)).toHaveLength(2)) // the page refetches to show who has the copy now
+    expect(screen.getByRole('dialog', { name: 'Mark this copy as lost?' })).toBe(dialog)
+    expect(chargeBox(dialog)).toHaveValue(250)
+    await waitFor(() => expect(confirmOf(dialog, 'Mark as lost')).toBeEnabled())
+    expect(confirmOf(dialog, 'Mark as lost')).toHaveFocus()
+  })
+
+  it('names the borrower the dialog showed, even when the list has since shown another', async () => {
+    const MEERA = { id: 's3', name: 'Meera Nair' }
+    const reborrowed = book({
+      ...ALGORITHMS,
+      copies: ALGORITHMS.copies.map((c) => (c.id === 'c1' ? { ...c, borrower: MEERA, dueAt: at(5, 8.5) } : c)),
+    })
+    let served = 0
+    const fetch = booksApi(() => json(200, page(++served === 1 ? [ALGORITHMS] : [reborrowed])), {
+      'POST /admin/copies/c1/lost': () => json(200, reborrowed),
+    })
+    renderPage()
+    await screen.findByRole('article')
+    await userEvent.click(chipButton('CS-ALG-01', 'Lost'))
+    const dialog = dialogOf('Mark this copy as lost?')
+    expect(dialog).toHaveTextContent('Rohan Verma has this copy')
+
+    // A live event refetches while the dialog is open: the chip now says Meera, but the dialog is what the librarian read.
+    act(() => live.handlers!.onEvent(CATALOGUE_CHANGED))
+    await waitFor(() => expect(listCalls(fetch)).toHaveLength(2), { timeout: 2_000 })
+    expect(await screen.findByText('Meera Nair')).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('Rohan Verma has this copy')
+
+    await userEvent.type(chargeBox(dialog), '250')
+    await userEvent.click(confirmOf(dialog, 'Mark as lost'))
+    await screen.findByText('Copy marked as lost.')
+    // The write names Rohan (s2), so the server refuses rather than charging Meera.
+    expect(writes(fetch)[0][1]!.body).toBe('{"replacementCharge":250,"borrowerId":"s2"}')
   })
 
   it('a refused restore keeps the waive box as the librarian left it', async () => {

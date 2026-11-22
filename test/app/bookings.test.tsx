@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import BookingsPage from '@/app/(console)/bookings/page'
 import { ToastProvider } from '@/components/Toasts'
@@ -8,6 +9,10 @@ import type { AdminBooking, BookingsPage as BookingsResponse } from '@/lib/booki
 import type { LiveHandlers } from '@/lib/live'
 import { LiveProvider } from '@/lib/liveContext'
 import { json, mockFetch } from '../helpers'
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
+}))
 
 const live = vi.hoisted(() => ({ handlers: null as LiveHandlers | null }))
 vi.mock('@/lib/live', async (importOriginal) => ({
@@ -168,11 +173,12 @@ describe('Bookings page', () => {
     expect(statusSelect()).toHaveValue('all')
   })
 
-  it('the student name is plain text', async () => {
+  it("the Bookings page links the student's name to the student page with from=bookings", async () => {
     bookingsApi(() => json(200, page([BOOKED])))
     renderPage()
-    const name = await screen.findByText('Rohan Verma')
-    expect(name.closest('a, button')).toBeNull()
+    const link = await screen.findByRole('link', { name: 'Rohan Verma' })
+    expect(link).toHaveAttribute('href', '/students/s2?from=bookings')
+    expect(link).toHaveTextContent('Rohan Verma')
   })
 
   it('search waits 300 ms and sends one request', async () => {

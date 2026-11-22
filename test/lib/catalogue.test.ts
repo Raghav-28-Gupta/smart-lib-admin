@@ -197,17 +197,24 @@ describe('copy writes', () => {
     expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
   })
 
-  it('marks a copy lost with an empty body for a shelf copy and the charge for one on loan', async () => {
+  it('marks a copy lost with an empty body for a shelf copy and the charge with the borrower for one on loan', async () => {
     writeToken('t')
     const fetch = mockFetch({ 'POST /admin/copies/c1/lost': () => json(200, BOOK) })
     await expect(markCopyLost('c1')).resolves.toEqual(BOOK)
-    await markCopyLost('c1', 250)
-    await markCopyLost('c1', 0) // a charge of 0 is still sent: it says "no replacement charge"
+    await markCopyLost('c1', 250, 's2')
+    await markCopyLost('c1', 0, 's2') // a charge of 0 is still sent: it says "no replacement charge"
     expect(urlOf(fetch).pathname).toBe('/admin/copies/c1/lost')
     expect(methodOf(fetch)).toBe('POST')
     expect(bodyOf(fetch, 0)).toBe('{}')
-    expect(bodyOf(fetch, 1)).toBe('{"replacementCharge":250}')
-    expect(bodyOf(fetch, 2)).toBe('{"replacementCharge":0}')
+    expect(bodyOf(fetch, 1)).toBe('{"replacementCharge":250,"borrowerId":"s2"}')
+    expect(bodyOf(fetch, 2)).toBe('{"replacementCharge":0,"borrowerId":"s2"}')
+  })
+
+  it('sends no borrower with no charge: a copy with nobody to charge posts an empty body', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/copies/c1/lost': () => json(200, BOOK) })
+    await markCopyLost('c1', undefined, 's2')
+    expect(bodyOf(fetch)).toBe('{}')
   })
 
   it('restores a copy with the waive flag and returns the book and whether it was waived', async () => {

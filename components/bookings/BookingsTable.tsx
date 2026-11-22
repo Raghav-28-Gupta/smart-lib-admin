@@ -1,14 +1,7 @@
+import { bookingStatusTag } from '@/components/bookings/bookingStatus'
+import { StudentLink } from '@/components/StudentLink'
 import { LIBRARY_TIMEZONE, shortDay, timeSpan } from '@/lib/format'
-import type { AdminBooking, BookingStatus } from '@/lib/bookings'
-
-// The canvas's tag classes for each status.
-const STATUS_TAGS: Record<BookingStatus, { label: string; cls: string }> = {
-  booked: { label: 'Booked', cls: 'tag-neutral' },
-  checked_in: { label: 'Checked in', cls: 'tag-neutral' },
-  completed: { label: 'Completed', cls: 'tag-accent-2' },
-  released: { label: 'Released', cls: 'tag-neutral' },
-  cancelled: { label: 'Cancelled', cls: 'tag-neutral' },
-}
+import type { AdminBooking } from '@/lib/bookings'
 
 /**
  * The canvas's bookings table. A cancelled row says who cancelled it and, if given, why.
@@ -38,12 +31,11 @@ export function BookingsTable({
         </thead>
         <tbody>
           {bookings.map((b) => {
-            // A status this console does not know (a newer server) still shows, as itself.
-            const tag = STATUS_TAGS[b.status] ?? { label: b.status, cls: 'tag-neutral' }
+            const tag = bookingStatusTag(b.status)
             return (
               <tr key={b.id}>
                 <td>{b.resource.name}</td>
-                <td>{b.student.name}</td>
+                <td><StudentLink student={b.student} from="bookings" /></td>
                 <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{shortDay(b.startTime, LIBRARY_TIMEZONE)}</td>
                 <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{timeSpan(b.startTime, b.endTime, LIBRARY_TIMEZONE)}</td>
                 <td>

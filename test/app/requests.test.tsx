@@ -83,6 +83,9 @@ describe('Requests page', () => {
     renderPage()
     expect(await screen.findByText('Borrow request')).toBeInTheDocument()
     expect(screen.getByText('Aditi Sharma')).toBeInTheDocument()
+    // Each name links to that student's page, opened from Requests.
+    expect(screen.getByRole('link', { name: 'Aditi Sharma' })).toHaveAttribute('href', '/students/u1?from=requests')
+    expect(screen.getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/u2?from=requests')
     expect(screen.getByText('waiting 12 min')).toBeInTheDocument()
     expect(screen.getByText('Clean Code — Robert C. Martin')).toBeInTheDocument()
     expect(screen.getByText('2 of 4 copies left · expires in 23 h')).toBeInTheDocument()

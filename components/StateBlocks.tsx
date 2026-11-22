@@ -34,13 +34,13 @@ export function NoMatchBlock({ title, clearLabel, onClear }: { title: string; cl
   )
 }
 
-/** There is nothing at all, so there is no filter to clear. */
-export function EmptyBlock({ icon: Icon, title, hint }: { icon: LucideIcon; title: string; hint: string }) {
+/** There is nothing at all, so there is no filter to clear. `hint` is left out when the title says it all. */
+export function EmptyBlock({ icon: Icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
   return (
     <div style={centered}>
       <Icon size={30} strokeWidth={2.5} color="var(--color-neutral-500)" aria-hidden="true" />
       <h3 style={heading}>{title}</h3>
-      <p className="text-muted" style={{ margin: 0, fontSize: 13, maxWidth: '38ch' }}>{hint}</p>
+      {hint && <p className="text-muted" style={{ margin: 0, fontSize: 13, maxWidth: '38ch' }}>{hint}</p>}
     </div>
   )
 }

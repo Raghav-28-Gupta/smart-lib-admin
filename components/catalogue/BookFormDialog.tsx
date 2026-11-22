@@ -2,7 +2,7 @@
 
 import { useId, useState } from 'react'
 import { Dialog } from '@/components/Dialog'
-import { useDialogSubmit } from '@/components/catalogue/useDialogSubmit'
+import { useDialogSubmit } from '@/components/useDialogSubmit'
 import {
   isPublishedYear, MAX_COPIES, MIN_COPIES, MIN_PUBLISHED_YEAR, maxPublishedYear, parseCopies, type AdminBook, type BookForm,
 } from '@/lib/catalogue'

@@ -21,8 +21,20 @@ const SECTIONS: Section[] = [
   { label: 'Fines', icon: Wallet, href: '/fines' },
 ]
 
-export function Sidebar({ userName, onLogOut, requestCount }: { userName: string; onLogOut: () => void; requestCount: number }) {
+/**
+ * `activeHref` names the section to highlight when the path is not one of the sections' own: a student page
+ * highlights the section it was opened from. Without it (or null) the section whose path is the current one is highlighted.
+ */
+export function Sidebar({
+  userName, onLogOut, requestCount, activeHref,
+}: {
+  userName: string
+  onLogOut: () => void
+  requestCount: number
+  activeHref?: string | null
+}) {
   const pathname = usePathname()
+  const current = activeHref ?? pathname
   return (
     <nav
       aria-label="Console"
@@ -43,7 +55,7 @@ export function Sidebar({ userName, onLogOut, requestCount }: { userName: string
       </div>
 
       {SECTIONS.map(({ label, icon: Icon, href }) => {
-        const active = pathname === href
+        const active = current === href
         const badge = href === '/requests' && requestCount > 0 ? requestCount : null
         return (
           <Link

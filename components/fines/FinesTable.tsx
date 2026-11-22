@@ -1,14 +1,7 @@
-import { LIBRARY_TIMEZONE, rupees, shortDay } from '@/lib/format'
-import type { AdminFine, FineStatus } from '@/lib/fines'
-
-// The canvas's tag classes for each status.
-const STATUS_TAGS: Record<FineStatus, { label: string; cls: string }> = {
-  accruing: { label: 'Accruing', cls: 'tag-accent' },
-  outstanding: { label: 'Outstanding', cls: 'tag-accent' },
-  adjusted: { label: 'Adjusted', cls: 'tag-accent-2' },
-  paid: { label: 'Paid', cls: 'tag-accent-2' },
-  waived: { label: 'Waived', cls: 'tag-accent-2' },
-}
+import { FineStatusCell, fineAmountLabel } from '@/components/fines/FineCells'
+import { StudentLink } from '@/components/StudentLink'
+import { LIBRARY_TIMEZONE, shortDay } from '@/lib/format'
+import type { AdminFine } from '@/lib/fines'
 
 const REASON_LABELS: Record<AdminFine['reason'], string> = {
   overdue: 'Overdue',
@@ -46,27 +39,15 @@ export function FinesTable({
         </thead>
         <tbody>
           {fines.map((f) => {
-            // A status or reason this console does not know (a newer server) still shows, as itself.
-            const tag = STATUS_TAGS[f.status] ?? { label: f.status, cls: 'tag-neutral' }
-            // A fine that was lowered keeps its history after it is paid, so the amount shows what it was whatever its status.
-            const lowered = f.originalAmount !== f.amount
-            // The note names a librarian only while the fine is adjusted or waived: on a paid row `recordedBy` is whoever recorded the payment.
-            const noteBy = f.status === 'adjusted' || f.status === 'waived'
             return (
               // An accruing row's id is its loan's, so it can equal a fine's: the kind keeps the keys apart.
               <tr key={`${f.kind}:${f.id}`}>
-                <td>{f.student.name}</td>
+                <td><StudentLink student={f.student} from="fines" /></td>
+                {/* A reason this console does not know (a newer server) still shows, as itself. */}
                 <td className="text-muted">{REASON_LABELS[f.reason] ?? f.reason}</td>
                 <td className="text-muted">{f.item}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{lowered ? `${rupees(f.amount)} (was ${rupees(f.originalAmount)})` : rupees(f.amount)}</td>
-                <td>
-                  <span className={`tag ${tag.cls}`}>{tag.label}</span>
-                  {f.note && (
-                    <div className="text-muted" style={{ fontSize: 11.5, marginTop: 4, maxWidth: 260, overflowWrap: 'anywhere' }}>
-                      {noteBy ? `${f.note} — ${f.recordedBy ?? 'the library'}` : f.note}
-                    </div>
-                  )}
-                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>{fineAmountLabel(f)}</td>
+                <td><FineStatusCell fine={f} /></td>
                 <td className="text-muted" style={{ whiteSpace: 'nowrap' }}>{shortDay(f.date, LIBRARY_TIMEZONE)}</td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {f.canSettle && (

@@ -20,6 +20,21 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page')
   })
 
+  it('activeHref overrides the path: a page outside the sections can keep one highlighted', () => {
+    render(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} activeHref="/fines" />)
+    expect(screen.getByRole('link', { name: 'Fines' })).toHaveAttribute('aria-current', 'page')
+    // The current path is /dashboard, but the override wins: only one section is current.
+    expect(screen.getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current')
+    expect(screen.getAllByRole('link').filter((l) => l.getAttribute('aria-current') === 'page')).toHaveLength(1)
+  })
+
+  it('without activeHref, or with null, it follows the path', () => {
+    const { rerender } = render(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} activeHref={null} />)
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page')
+    rerender(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} activeHref={undefined} />)
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page')
+  })
+
   it('links to Requests with the number waiting', () => {
     renderSidebar(vi.fn(), 3)
     const link = screen.getByRole('link', { name: /Requests/ })

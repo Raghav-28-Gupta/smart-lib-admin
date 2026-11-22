@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import FinesPage from '@/app/(console)/fines/page'
 import { ToastProvider } from '@/components/Toasts'
@@ -8,6 +9,10 @@ import type { AdminFine, FinesPage as FinesResponse } from '@/lib/fines'
 import type { LiveEvent, LiveHandlers } from '@/lib/live'
 import { LiveProvider } from '@/lib/liveContext'
 import { json, mockFetch } from '../helpers'
+
+vi.mock('next/link', () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
+}))
 
 const live = vi.hoisted(() => ({ handlers: null as LiveHandlers | null }))
 vi.mock('@/lib/live', async (importOriginal) => ({
@@ -222,11 +227,22 @@ describe('Fines page', () => {
     expect(await screen.findByText('<b>bold</b> & more — A <i>B</i>')).toBeInTheDocument()
   })
 
-  it('the student name is plain text', async () => {
-    finesApi(() => json(200, page([OVERDUE])))
+  it("the Fines page links the student's name to the student page with from=fines", async () => {
+    finesApi(() => json(200, page([OVERDUE, ACCRUING])))
     renderPage()
-    const name = await screen.findByText('Rohan Verma')
-    expect(name.closest('a, button')).toBeNull()
+    const links = await screen.findAllByRole('link')
+    // The accruing row links too: it names a student like any other.
+    expect(links.map((l) => [l.textContent, l.getAttribute('href')])).toEqual([
+      ['Rohan Verma', '/students/s2?from=fines'],
+      ['Aditi Sharma', '/students/s1?from=fines'],
+    ])
+  })
+
+  it('shows a student name as text, never as markup', async () => {
+    finesApi(() => json(200, page([fine({ id: 'f7', student: { id: 's9', name: 'A <b>B</b>', email: 'x@example.edu' } })])))
+    renderPage()
+    const link = await screen.findByRole('link', { name: 'A <b>B</b>' })
+    expect(link.querySelector('b')).toBeNull()
   })
 
   it('keys a fine and an accruing row that share an id apart', async () => {

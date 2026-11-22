@@ -31,8 +31,15 @@ npm run build      # production build, includes type-checking
 - Pending requests live in `RequestsProvider` (`lib/requestsContext.tsx`); read
   them with `useRequests()` instead of fetching them again.
 - Live topics (`LiveTopic` in `lib/live.ts`) are `requests`, `metrics`,
-  `bookings` and `resources`. The Bookings page refetches on `bookings`
-  (`booking.changed`), the Resources page on `resources` (`resource.changed`).
+  `bookings`, `resources`, `fines`, `catalogue` and `students`. Each page
+  refetches on its own: Requests (and the sidebar count) on `requests`, the
+  Dashboard on `metrics`, Bookings on `bookings` (`booking.changed`), Resources on
+  `resources` (`resource.changed`), Fines on `fines` (`fine.changed`, and
+  `loan.changed` for a past-due return), Catalogue on `catalogue`
+  (`catalogue.changed`, `loan.changed`) and `requests` (a pending borrow request
+  holds a copy), and the student page on `fines`, `catalogue`, `bookings`,
+  `requests` and `students` (`student.changed`). A new topic must be added to
+  `lib/live.ts` and to the page that should react to it.
 - `apiRequest` takes `GET`, `POST` and `PATCH`.
 - Dialogs use the shared `components/Dialog.tsx`: backdrop, `role="dialog"`,
   Escape to cancel, Tab kept inside, focus handed back to the opener. It does
@@ -43,11 +50,13 @@ npm run build      # production build, includes type-checking
   second call while one is in flight (a ref guard), toasts the success message or
   the `ApiError` message (nothing on a 401 or 403, which ends the session), and
   stays `busy` until the latest `refresh` has returned. Disable the row's buttons
-  with `busy`. Wrap it per page (`useBookingAction`, `useResourceActions`).
+  with `busy`. Wrap it per page (`useBookingAction`, `useResourceActions`,
+  `useFineActions`, `useCatalogueActions`; the student page calls it directly).
   `run` resolves `true` when the action succeeded and `false` when it failed or was
   ignored as a second call; callers that do not care just `void` it. A dialog with
-  typed values (the Catalogue's book, copies, lost-on-loan and restore dialogs) stays open until `run`
-  resolves `true`, so a refusal does not throw the form away (`useDialogSubmit`).
+  typed values (the Catalogue's book, copies, lost-on-loan and restore dialogs, the student page's adjust dialog)
+  stays open until `run` resolves `true`, so a refusal does not throw the form away (`components/useDialogSubmit.ts`).
+  The Fines page's two dialogs close as soon as they are confirmed (their row buttons stay off through `busy`).
   `success` may be a function of the action's result when the toast depends on the
   server's answer (Restore says whether the replacement charge was waived).
 - A list page that fetches its own data uses `useLoader(fetcher)`
@@ -59,10 +68,23 @@ npm run build      # production build, includes type-checking
 - A list page with search, a status filter and paging uses `useListQuery(fetchPage, rowCount)`
   (`lib/useListQuery.ts`) instead of wiring `useLoader` itself: it owns the debounced search, the
   status, the page, `clearFilters`, `pastEnd` (the page asked for is gone) and the loader's
-  `{ state, refresh, retry }`. Bookings and Fines use it; leave `Status` out for a search-only page.
+  `{ state, refresh, retry }`. Bookings and Fines use it, and the Catalogue without a status (leave
+  `Status` out for a search-only page).
+- A paged list ends with `components/Pager.tsx` (`page`, `pageSize`, `total`, `onPage`): Previous, "Page 2 of 3"
+  and Next, disabled at the ends, and nothing when one page holds everything. The "x–y of N" count above it is
+  `pageRange` (`lib/format.ts`).
 - The loading, error, no-match and empty blocks of a list page come from the
   shared `components/StateBlocks.tsx`; each page only words them (see
   `ResourcesStates.tsx`, `BookingsStates.tsx`).
+- A student's name in a table row, card or copy chip is a `components/StudentLink.tsx` (`<StudentLink student
+  from="fines" />`), not plain text (a sentence in a dialog just uses the name): `from` names the section it sits
+  in (`StudentFrom` in `lib/students.ts`: `bookings`, `fines`, `requests`, `catalogue`), so the student page's
+  breadcrumb and highlighted sidebar section lead back there.
+- The layout titles a page and highlights its sidebar section from the path (`PAGE_TITLES`, `Sidebar`'s
+  `activeHref`). A page the path cannot describe (`/students/<id>?from=fines`) sets both itself with
+  `usePageTitle(title)` and `useActiveHref(href)` (`lib/pageTitle.tsx`); both reset when the page unmounts.
+- A page that reads `useSearchParams` (or `useParams` on a dynamic segment) renders it inside `<Suspense>`, as
+  the login and student pages do, or `next build` fails while prerendering.
 - Never commit for the user: present `git add`/`git commit` commands (prefix `admin:`).
 
 <!-- BEGIN:nextjs-agent-rules -->

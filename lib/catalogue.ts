@@ -132,12 +132,15 @@ export function markCopyMaintenance(id: string): Promise<AdminBook> {
 
 /**
  * A copy goes to lost; the server answers the book. A copy a student has on loan needs `replacementCharge`
- * (whole rupees, 0 to 10,000): their loan closes and the charge becomes a Lost book fine. A shelf copy sends none.
+ * (whole rupees, 0 to 10,000) and `borrowerId`, the student the librarian saw in the dialog: their loan closes and
+ * the charge becomes a Lost book fine, but only while the copy's open loan is still theirs (409 if it was returned
+ * and borrowed again meanwhile), so a charge never lands on the wrong student. A shelf copy, or one marked borrowed
+ * with no borrower, sends neither and the body is `{}`.
  */
-export function markCopyLost(id: string, replacementCharge?: number): Promise<AdminBook> {
+export function markCopyLost(id: string, replacementCharge?: number, borrowerId?: string): Promise<AdminBook> {
   return apiRequest<AdminBook>(copyPath(id, 'lost'), {
     method: 'POST',
-    body: replacementCharge === undefined ? {} : { replacementCharge },
+    body: replacementCharge === undefined ? {} : { replacementCharge, borrowerId },
   })
 }
 

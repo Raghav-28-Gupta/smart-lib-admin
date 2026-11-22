@@ -1,3 +1,4 @@
+import { StudentLink } from '@/components/StudentLink'
 import type { AdminCopy, CopyStatus } from '@/lib/catalogue'
 import { LIBRARY_TIMEZONE, shortDay } from '@/lib/format'
 
@@ -13,18 +14,23 @@ const STATUS_TAGS: Record<CopyStatus, { label: string; cls: string }> = {
   lost: { label: 'Lost', cls: 'tag-accent' },
 }
 
-const ACCENT = 'var(--color-accent-700)'
-const RESTORE = 'var(--color-accent-2-800)'
-const MAINTENANCE_BUTTON = { action: 'maintenance', label: 'Maintenance', color: ACCENT } as const
-const LOST_BUTTON = { action: 'lost', label: 'Lost', color: ACCENT } as const
-const RESTORE_BUTTON = { action: 'restore', label: 'Restore', color: RESTORE } as const
+interface ChipButton {
+  action: CopyAction
+  label: string
+  color: string
+}
+
+// The canvas's colours: the two that take a copy out of circulation in accent, Restore in the green.
+const MAINTENANCE_BUTTON: ChipButton = { action: 'maintenance', label: 'Maintenance', color: 'var(--color-accent-700)' }
+const LOST_BUTTON: ChipButton = { action: 'lost', label: 'Lost', color: 'var(--color-accent-700)' }
+const RESTORE_BUTTON: ChipButton = { action: 'restore', label: 'Restore', color: 'var(--color-accent-2-800)' }
 
 /**
  * The actions a copy offers, as the spec and canvas have them: a shelf copy can go into maintenance or be
  * lost, one on loan can be lost, one out of service can be restored. A held copy (a pending borrow request)
  * accepts none, and neither does a status this console does not know.
  */
-const ACTIONS: Partial<Record<CopyStatus, readonly (typeof MAINTENANCE_BUTTON | typeof LOST_BUTTON | typeof RESTORE_BUTTON)[]>> = {
+const ACTIONS: Partial<Record<CopyStatus, readonly ChipButton[]>> = {
   available: [MAINTENANCE_BUTTON, LOST_BUTTON],
   on_loan: [LOST_BUTTON],
   maintenance: [RESTORE_BUTTON],
@@ -32,8 +38,9 @@ const ACTIONS: Partial<Record<CopyStatus, readonly (typeof MAINTENANCE_BUTTON | 
 }
 
 /**
- * One copy of a book: its barcode and status tag. A copy on loan also says who has it and when it is due,
- * in the library's time zone; one marked borrowed with no open loan (seed data) shows just the tag.
+ * One copy of a book: its barcode and status tag. A copy on loan also says who has it (a link to the student's
+ * page) and when it is due, in the library's time zone; one marked borrowed with no open loan (seed data) shows
+ * just the tag.
  * Then the copy's actions as the canvas's text buttons, disabled while `busy` (a change is settling).
  */
 export function CopyChip({
@@ -45,12 +52,7 @@ export function CopyChip({
 }) {
   // A status this console does not know (a newer server) still shows, as itself.
   const tag = STATUS_TAGS[copy.status] ?? { label: copy.status, cls: 'tag-neutral' }
-  const loan =
-    copy.status === 'on_loan' && copy.borrower
-      ? copy.dueAt
-        ? `${copy.borrower.name} · due ${shortDay(copy.dueAt, LIBRARY_TIMEZONE)}`
-        : copy.borrower.name
-      : null
+  const borrower = copy.status === 'on_loan' ? copy.borrower : null
 
   return (
     <li
@@ -61,7 +63,12 @@ export function CopyChip({
     >
       <span className="text-muted">{copy.barcode}</span>
       <span className={`tag ${tag.cls}`} style={{ fontSize: 10 }}>{tag.label}</span>
-      {loan && <span className="text-muted">{loan}</span>}
+      {borrower && (
+        <span className="text-muted">
+          <StudentLink student={borrower} from="catalogue" />
+          {copy.dueAt && ` · due ${shortDay(copy.dueAt, LIBRARY_TIMEZONE)}`}
+        </span>
+      )}
       {(ACTIONS[copy.status] ?? []).map(({ action, label, color }) => (
         <button
           key={action}

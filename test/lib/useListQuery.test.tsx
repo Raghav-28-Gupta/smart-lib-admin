@@ -25,7 +25,15 @@ function setup(answer: (query: ListQuery<Status>) => Reply = () => ONE_ROW) {
 }
 
 const settle = (hook: ReturnType<typeof setup>) => waitFor(() => expect(hook.result.current.state.kind).toBe('loaded'))
-const advance = (ms: number) => act(async () => void vi.advanceTimersByTime(ms))
+// Fake timers here use `shouldAdvanceTime`, so the fake clock also creeps forward with real time (that is what lets
+// `waitFor` poll). It only creeps while the test yields to the event loop, so a step that must stop short of the
+// debounce deadline may not yield: `advance` is a synchronous `act` with no `await`, nothing can move the clock
+// between it and the next line. `advancePast` is for steps that cross the deadline or wait to prove nothing else
+// fires; it yields (microtasks flush, the clock may creep), which can only make a timer fire sooner, never mask one.
+const advance = (ms: number) => {
+  act(() => void vi.advanceTimersByTime(ms))
+}
+const advancePast = (ms: number) => act(async () => void vi.advanceTimersByTime(ms))
 
 afterEach(() => {
   vi.useRealTimers()
@@ -48,20 +56,20 @@ describe('useListQuery', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
     act(() => hook.result.current.setSearchInput('a'))
-    await advance(200)
+    advance(200)
     act(() => hook.result.current.setSearchInput('ana')) // typing again restarts the wait
-    await advance(SEARCH_DEBOUNCE_MS - 1)
+    advance(SEARCH_DEBOUNCE_MS - 1) // 1 ms short of the deadline: no await from here to the assertions below
     expect(hook.fetchPage).toHaveBeenCalledTimes(1)
     expect(hook.result.current.searchInput).toBe('ana')
     expect(hook.result.current.search).toBe('')
 
-    await advance(2)
+    await advancePast(2)
     await waitFor(() => expect(hook.fetchPage).toHaveBeenCalledTimes(2))
     expect(hook.queries()[1]).toEqual({ search: 'ana', status: 'all', page: 1 })
     expect(hook.result.current.search).toBe('ana')
     expect(hook.result.current.filtered).toBe(true)
 
-    await advance(1_000)
+    await advancePast(1_000)
     expect(hook.fetchPage).toHaveBeenCalledTimes(2) // one request, not one per keystroke
   })
 
@@ -71,11 +79,11 @@ describe('useListQuery', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
     act(() => hook.result.current.setSearchInput('   '))
-    await advance(1_000)
+    await advancePast(1_000)
     expect(hook.fetchPage).toHaveBeenCalledTimes(1)
 
     act(() => hook.result.current.setSearchInput('  ana '))
-    await advance(SEARCH_DEBOUNCE_MS + 1)
+    await advancePast(SEARCH_DEBOUNCE_MS + 1)
     await waitFor(() => expect(hook.fetchPage).toHaveBeenCalledTimes(2))
     expect(hook.queries()[1].search).toBe('ana')
     expect(hook.result.current.searchInput).toBe('  ana ') // the box keeps what was typed
@@ -89,9 +97,9 @@ describe('useListQuery', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
     act(() => hook.result.current.setSearchInput('x'))
-    await advance(SEARCH_DEBOUNCE_MS + 1)
+    await advancePast(SEARCH_DEBOUNCE_MS + 1)
     await waitFor(() => expect(hook.fetchPage).toHaveBeenCalledTimes(3))
-    await advance(1_000)
+    await advancePast(1_000)
     expect(hook.queries()).toEqual([
       { search: '', status: 'all', page: 1 },
       { search: '', status: 'all', page: 2 },
@@ -125,7 +133,7 @@ describe('useListQuery', () => {
     act(() => hook.result.current.setStatus('closed'))
     act(() => hook.result.current.setPage(2))
     act(() => hook.result.current.setSearchInput('x'))
-    await advance(SEARCH_DEBOUNCE_MS + 1)
+    await advancePast(SEARCH_DEBOUNCE_MS + 1)
     await waitFor(() => expect(hook.result.current.search).toBe('x'))
     await waitFor(() => expect(hook.queries().at(-1)).toEqual({ search: 'x', status: 'closed', page: 1 }))
     const before = hook.fetchPage.mock.calls.length
@@ -139,7 +147,7 @@ describe('useListQuery', () => {
     await waitFor(() => expect(hook.fetchPage).toHaveBeenCalledTimes(before + 1))
     expect(hook.queries().at(-1)).toEqual({ search: '', status: 'all', page: 1 })
 
-    await advance(1_000)
+    await advancePast(1_000)
     expect(hook.fetchPage).toHaveBeenCalledTimes(before + 1) // clearing did not wait out a debounce, nor leave one behind
   })
 
@@ -149,9 +157,9 @@ describe('useListQuery', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
     act(() => hook.result.current.setSearchInput('abc'))
-    await advance(100)
+    advance(100) // no yield before clearFilters: the clock cannot creep up to the deadline first
     act(() => hook.result.current.clearFilters())
-    await advance(1_000)
+    await advancePast(1_000)
     expect(hook.fetchPage).toHaveBeenCalledTimes(1)
     expect(hook.result.current.searchInput).toBe('')
   })
@@ -203,7 +211,7 @@ describe('useListQuery', () => {
 
     vi.useFakeTimers({ shouldAdvanceTime: true })
     act(() => result.current.setSearchInput('x'))
-    await advance(SEARCH_DEBOUNCE_MS + 1)
+    await advancePast(SEARCH_DEBOUNCE_MS + 1)
     await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2))
     expect(fetchPage.mock.calls[1][0]).toMatchObject({ search: 'x', page: 1 })
     expect(result.current.filtered).toBe(true)

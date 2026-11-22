@@ -1,8 +1,8 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { useDialogSubmit } from '@/components/catalogue/useDialogSubmit'
 import { Dialog } from '@/components/Dialog'
+import { useDialogSubmit } from '@/components/useDialogSubmit'
 import { MAX_COPIES, MIN_COPIES, parseCopies, type AdminBook } from '@/lib/catalogue'
 
 /**

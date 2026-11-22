@@ -1,9 +1,9 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { useDialogSubmit } from '@/components/catalogue/useDialogSubmit'
 import type { CopyAction } from '@/components/catalogue/CopyChip'
 import { Dialog } from '@/components/Dialog'
+import { useDialogSubmit } from '@/components/useDialogSubmit'
 import type { AdminCopy } from '@/lib/catalogue'
 import { rupees } from '@/lib/format'
 

@@ -35,7 +35,7 @@ export function useWriteAction(refresh: () => Promise<void>) {
   })
 
   const run = useCallback(
-    async <Result,>(action: () => Promise<Result>, success: string | ((result: Result) => string)): Promise<boolean> => {
+    async <Result>(action: () => Promise<Result>, success: string | ((result: Result) => string)): Promise<boolean> => {
       if (inFlight.current) return false
       inFlight.current = true
       setBusy(true)

@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar'
 import { ToastProvider } from '@/components/Toasts'
 import { TopBar } from '@/components/TopBar'
 import { LiveProvider, useLiveStatus } from '@/lib/liveContext'
+import { PageTitleProvider, usePageChrome } from '@/lib/pageTitle'
 import { RequestsProvider, useRequests, waitingCount } from '@/lib/requestsContext'
 import { ConsoleGuard, useSession } from '@/lib/session'
 
@@ -23,7 +24,9 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
       <LiveProvider>
         <ToastProvider>
           <RequestsProvider>
-            <ConsoleFrame>{children}</ConsoleFrame>
+            <PageTitleProvider>
+              <ConsoleFrame>{children}</ConsoleFrame>
+            </PageTitleProvider>
           </RequestsProvider>
         </ToastProvider>
       </LiveProvider>
@@ -47,6 +50,8 @@ function ConsoleSkeleton() {
 function ConsoleFrame({ children }: { children: ReactNode }) {
   const { user, logOut } = useSession()
   const pathname = usePathname()
+  // A page the path cannot title (the student page) sets its own title and the sidebar section to keep highlighted.
+  const { title, activeHref } = usePageChrome()
   const liveStatus = useLiveStatus()
   const waiting = waitingCount(useRequests().state)
 
@@ -69,9 +74,9 @@ function ConsoleFrame({ children }: { children: ReactNode }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--color-bg)', color: 'var(--color-text)', fontFamily: 'var(--font-body)', fontSize: 14 }}>
       <RequestToasts />
-      <Sidebar userName={user.name} onLogOut={logOut} requestCount={waiting} />
+      <Sidebar userName={user.name} onLogOut={logOut} requestCount={waiting} activeHref={activeHref} />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-        <TopBar title={PAGE_TITLES[pathname] ?? 'Dashboard'} liveStatus={liveStatus} />
+        <TopBar title={title ?? PAGE_TITLES[pathname] ?? 'Dashboard'} liveStatus={liveStatus} />
         <main style={{ flex: 1, overflow: 'auto', padding: '22px 28px 40px' }}>{children}</main>
       </div>
     </div>

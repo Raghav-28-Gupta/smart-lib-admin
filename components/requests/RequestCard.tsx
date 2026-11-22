@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { StudentLink } from '@/components/StudentLink'
 import { waitingLabel } from '@/lib/format'
 import type { PendingRequest } from '@/lib/requests'
 import { useNow } from '@/lib/useNow'
@@ -20,7 +21,7 @@ export function RequestCard({ request }: { request: PendingRequest }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className={`tag ${borrow ? 'tag-accent' : 'tag-accent-2'}`}>{borrow ? 'Borrow request' : 'Room request'}</span>
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{request.student.name}</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}><StudentLink student={request.student} from="requests" /></span>
           <span className="text-muted" style={{ fontSize: 11.5 }}>waiting {waitingLabel(now - Date.parse(request.requestedAt))}</span>
         </div>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{requestTitle(request)}</div>
