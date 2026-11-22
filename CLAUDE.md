@@ -30,9 +30,13 @@ npm run build      # production build, includes type-checking
   `useLiveRefresh(topics, refetch)` or react with `useLiveMessages`. Never poll.
 - Pending requests live in `RequestsProvider` (`lib/requestsContext.tsx`); read
   them with `useRequests()` instead of fetching them again.
+- The Needs attention queue lives in `AttentionProvider` (`lib/attentionContext.tsx`), mounted next to it in the console
+  layout: read it with `useAttention()`; the sidebar badge is `attentionCount(state)` (`counts.all`). `AttentionItem`
+  (`lib/attention.ts`) is a union on `kind`; the page filters its chips client-side and reads `?type=` inside `<Suspense>`.
 - Live topics (`LiveTopic` in `lib/live.ts`) are `requests`, `metrics`,
-  `bookings`, `resources`, `fines`, `catalogue` and `students`. Each page
-  refetches on its own: Requests (and the sidebar count) on `requests`, the
+  `bookings`, `resources`, `fines`, `catalogue`, `students` and `attention`. Each page
+  refetches on its own: Requests (and the sidebar count) on `requests`, Needs attention
+  (and its sidebar count) on `attention` (`attention.changed`), the
   Dashboard on `metrics`, Bookings on `bookings` (`booking.changed`), Resources on
   `resources` (`resource.changed`), Fines on `fines` (`fine.changed`, and
   `loan.changed` for a past-due return), Catalogue on `catalogue`
@@ -51,7 +55,7 @@ npm run build      # production build, includes type-checking
   the `ApiError` message (nothing on a 401 or 403, which ends the session), and
   stays `busy` until the latest `refresh` has returned. Disable the row's buttons
   with `busy`. Wrap it per page (`useBookingAction`, `useResourceActions`,
-  `useFineActions`, `useCatalogueActions`; the student page calls it directly).
+  `useFineActions`, `useCatalogueActions`, `useAttentionActions`; the student page calls it directly).
   `run` resolves `true` when the action succeeded and `false` when it failed or was
   ignored as a second call; callers that do not care just `void` it. A dialog with
   typed values (the Catalogue's book, copies, lost-on-loan and restore dialogs, the student page's adjust dialog)
@@ -78,7 +82,7 @@ npm run build      # production build, includes type-checking
   `ResourcesStates.tsx`, `BookingsStates.tsx`).
 - A student's name in a table row, card or copy chip is a `components/StudentLink.tsx` (`<StudentLink student
   from="fines" />`), not plain text (a sentence in a dialog just uses the name): `from` names the section it sits
-  in (`StudentFrom` in `lib/students.ts`: `bookings`, `fines`, `requests`, `catalogue`), so the student page's
+  in (`StudentFrom` in `lib/students.ts`: `bookings`, `fines`, `requests`, `catalogue`, `attention`), so the student page's
   breadcrumb and highlighted sidebar section lead back there.
 - The layout titles a page and highlights its sidebar section from the path (`PAGE_TITLES`, `Sidebar`'s
   `activeHref`). A page the path cannot describe (`/students/<id>?from=fines`) sets both itself with

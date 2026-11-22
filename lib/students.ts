@@ -60,19 +60,20 @@ export interface AdminStudent {
 }
 
 /** The sections a student is opened from; the URL's `?from=` names one. */
-export type StudentFrom = 'bookings' | 'fines' | 'requests' | 'catalogue'
+export type StudentFrom = 'bookings' | 'fines' | 'requests' | 'catalogue' | 'attention'
 
 const SECTIONS: Record<StudentFrom, { label: string; href: string }> = {
   bookings: { label: 'Bookings', href: '/bookings' },
   fines: { label: 'Fines', href: '/fines' },
   requests: { label: 'Requests', href: '/requests' },
   catalogue: { label: 'Catalogue', href: '/catalogue' },
+  attention: { label: 'Needs attention', href: '/attention' },
 }
 const DASHBOARD = { label: 'Dashboard', href: '/dashboard' }
 
 /**
  * The section a student page was opened from: its sidebar label and link. A missing or unknown value (the page
- * opened directly, or a hand-edited URL) is the Dashboard. Only the four own keys count: `?from=constructor` is unknown too.
+ * opened directly, or a hand-edited URL) is the Dashboard. Only the own keys count: `?from=constructor` is unknown too.
  */
 export function studentSection(from: string | null | undefined): { label: string; href: string } {
   return from && Object.hasOwn(SECTIONS, from) ? SECTIONS[from as StudentFrom] : DASHBOARD

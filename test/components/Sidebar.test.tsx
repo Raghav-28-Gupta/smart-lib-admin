@@ -9,8 +9,8 @@ vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }))
 
-const renderSidebar = (onLogOut = vi.fn(), requestCount = 0) => {
-  render(<Sidebar userName="Librarian One" onLogOut={onLogOut} requestCount={requestCount} />)
+const renderSidebar = (onLogOut = vi.fn(), requestCount = 0, attentionCount?: number) => {
+  render(<Sidebar userName="Librarian One" onLogOut={onLogOut} requestCount={requestCount} attentionCount={attentionCount} />)
   return onLogOut
 }
 
@@ -50,7 +50,8 @@ describe('Sidebar', () => {
   it('Sidebar: every section is a link, none says Coming soon', () => {
     renderSidebar()
     const sections = {
-      Dashboard: '/dashboard', Requests: '/requests', Bookings: '/bookings', Catalogue: '/catalogue', Resources: '/resources', Fines: '/fines',
+      Dashboard: '/dashboard', Requests: '/requests', 'Needs attention': '/attention', Bookings: '/bookings', Catalogue: '/catalogue',
+      Resources: '/resources', Fines: '/fines',
     }
     for (const [label, href] of Object.entries(sections)) {
       expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href)
@@ -60,9 +61,31 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Coming soon')).toBeNull()
   })
 
-  it('leaves out the deferred Needs attention queue', () => {
-    renderSidebar()
-    expect(screen.queryByText('Needs attention')).toBeNull()
+  it('the sidebar has Needs attention right after Requests, with the count as a badge', () => {
+    renderSidebar(vi.fn(), 2, 5)
+    const labels = screen.getAllByRole('link').map((l) => l.textContent)
+    expect(labels.indexOf('Needs attention5')).toBe(labels.indexOf('Requests2') + 1)
+    const link = screen.getByRole('link', { name: /Needs attention/ })
+    expect(link).toHaveAttribute('href', '/attention')
+    expect(link).toHaveTextContent('5')
+    // Each entry has its own badge: Requests keeps its own count.
+    expect(screen.getByRole('link', { name: /Requests/ })).toHaveTextContent('2')
+    expect(screen.getByRole('link', { name: /Requests/ })).not.toHaveTextContent('5')
+  })
+
+  it('hides the Needs attention badge at 0, and when the count is not given', () => {
+    const { unmount } = render(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} attentionCount={0} />)
+    expect(screen.getByRole('link', { name: 'Needs attention' })).toBeInTheDocument()
+    unmount()
+    // An older caller that does not know the prop still renders: it defaults to 0.
+    render(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} />)
+    expect(screen.getByRole('link', { name: 'Needs attention' })).toBeInTheDocument()
+  })
+
+  it('the Needs attention entry is highlighted on /attention, and when a student page was opened from it', () => {
+    render(<Sidebar userName="Librarian One" onLogOut={vi.fn()} requestCount={0} activeHref="/attention" />)
+    expect(screen.getByRole('link', { name: 'Needs attention' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Requests' })).not.toHaveAttribute('aria-current')
   })
 
   it("shows the admin's name and initials, and logs out", async () => {

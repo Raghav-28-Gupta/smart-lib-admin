@@ -96,6 +96,25 @@ export function shortDay(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone }).format(new Date(iso))
 }
 
+const DAY_MS = 86_400_000
+
+/** Whole days from `iso` to `now` (ms): 0 under 24 hours, and 0 for a time in the future or one that is not a date. */
+export function wholeDaysSince(iso: string, now: number): number {
+  const days = Math.floor((now - Date.parse(iso)) / DAY_MS)
+  return Number.isFinite(days) ? Math.max(0, days) : 0
+}
+
+/** "1 day", "3 days". */
+export function dayCount(days: number): string {
+  return `${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+/** "today" (under a day), "1 day ago", "2 days ago": how long ago `iso` was, in whole days. */
+export function daysAgo(iso: string, now: number): string {
+  const days = wholeDaysSince(iso, now)
+  return days === 0 ? 'today' : `${dayCount(days)} ago`
+}
+
 /** "₹150": a whole-rupee amount. */
 export function rupees(amount: number): string {
   return `₹${amount}`

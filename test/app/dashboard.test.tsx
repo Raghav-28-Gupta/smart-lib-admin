@@ -114,6 +114,22 @@ describe('Dashboard', () => {
     expect(screen.getByText('68%')).toBeInTheDocument()
   })
 
+  it('the Overdue materials card on the Dashboard links to /attention?type=overdue', async () => {
+    serve(METRICS)
+    renderDashboard()
+    const card = await screen.findByRole('link', { name: /Overdue materials/ })
+    expect(card).toHaveAttribute('href', '/attention?type=overdue')
+    // It keeps its look and its content: the same card, now a link.
+    expect(card).toHaveClass('card', 'elev-sm')
+    expect(card).toHaveTextContent('Overdue materials')
+    expect(card).toHaveTextContent('9')
+    expect(card).toHaveTextContent('+2 since yesterday')
+    // Only that card is a link: the others stay plain.
+    for (const kicker of ['Utilisation today', 'Circulation, 7 days', 'Peak demand']) {
+      expect(screen.queryByRole('link', { name: new RegExp(kicker) })).toBeNull()
+    }
+  })
+
   it('offers Retry after a failure, and loads when retried', async () => {
     serve(METRICS, 500)
     renderDashboard()

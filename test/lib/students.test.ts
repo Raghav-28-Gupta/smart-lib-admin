@@ -69,6 +69,7 @@ describe('studentHref', () => {
     expect(studentHref('s1', 'bookings')).toBe('/students/s1?from=bookings')
     expect(studentHref('s1', 'requests')).toBe('/students/s1?from=requests')
     expect(studentHref('s1', 'catalogue')).toBe('/students/s1?from=catalogue')
+    expect(studentHref('s1', 'attention')).toBe('/students/s1?from=attention')
   })
 
   it('encodes the id', () => {
@@ -82,6 +83,10 @@ describe('studentSection', () => {
     expect(studentSection('fines')).toEqual({ label: 'Fines', href: '/fines' })
     expect(studentSection('requests')).toEqual({ label: 'Requests', href: '/requests' })
     expect(studentSection('catalogue')).toEqual({ label: 'Catalogue', href: '/catalogue' })
+  })
+
+  it("studentSection('attention') labels the breadcrumb \"Needs attention\" and leads back to /attention", () => {
+    expect(studentSection('attention')).toEqual({ label: 'Needs attention', href: '/attention' })
   })
 
   it('falls back to the Dashboard for a missing or unknown value, including names every object has', () => {

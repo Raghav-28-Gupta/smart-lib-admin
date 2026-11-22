@@ -7,6 +7,7 @@ import { RequestToasts } from '@/components/RequestToasts'
 import { Sidebar } from '@/components/Sidebar'
 import { ToastProvider } from '@/components/Toasts'
 import { TopBar } from '@/components/TopBar'
+import { AttentionProvider, attentionCount, useAttention } from '@/lib/attentionContext'
 import { LiveProvider, useLiveStatus } from '@/lib/liveContext'
 import { PageTitleProvider, usePageChrome } from '@/lib/pageTitle'
 import { RequestsProvider, useRequests, waitingCount } from '@/lib/requestsContext'
@@ -14,7 +15,7 @@ import { ConsoleGuard, useSession } from '@/lib/session'
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard', '/requests': 'Requests', '/bookings': 'Bookings', '/catalogue': 'Catalogue', '/resources': 'Resources',
-  '/fines': 'Fines',
+  '/fines': 'Fines', '/attention': 'Needs attention',
 }
 const APP_TITLE = 'SmartLib Admin'
 
@@ -24,9 +25,11 @@ export default function ConsoleLayout({ children }: { children: ReactNode }) {
       <LiveProvider>
         <ToastProvider>
           <RequestsProvider>
-            <PageTitleProvider>
-              <ConsoleFrame>{children}</ConsoleFrame>
-            </PageTitleProvider>
+            <AttentionProvider>
+              <PageTitleProvider>
+                <ConsoleFrame>{children}</ConsoleFrame>
+              </PageTitleProvider>
+            </AttentionProvider>
           </RequestsProvider>
         </ToastProvider>
       </LiveProvider>
@@ -54,6 +57,7 @@ function ConsoleFrame({ children }: { children: ReactNode }) {
   const { title, activeHref } = usePageChrome()
   const liveStatus = useLiveStatus()
   const waiting = waitingCount(useRequests().state)
+  const needAttention = attentionCount(useAttention().state)
 
   // The browser tab shows how many requests are waiting. Next re-applies the
   // page's own <title> when you navigate, so the title is put back whenever it changes.
@@ -74,7 +78,7 @@ function ConsoleFrame({ children }: { children: ReactNode }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--color-bg)', color: 'var(--color-text)', fontFamily: 'var(--font-body)', fontSize: 14 }}>
       <RequestToasts />
-      <Sidebar userName={user.name} onLogOut={logOut} requestCount={waiting} activeHref={activeHref} />
+      <Sidebar userName={user.name} onLogOut={logOut} requestCount={waiting} attentionCount={needAttention} activeHref={activeHref} />
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
         <TopBar title={title ?? PAGE_TITLES[pathname] ?? 'Dashboard'} liveStatus={liveStatus} />
         <main style={{ flex: 1, overflow: 'auto', padding: '22px 28px 40px' }}>{children}</main>

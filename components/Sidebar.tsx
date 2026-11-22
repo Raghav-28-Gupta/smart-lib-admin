@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, Calendar, DoorOpen, Inbox, LayoutDashboard, Wallet, type LucideIcon } from 'lucide-react'
+import { BookOpen, Calendar, DoorOpen, Inbox, LayoutDashboard, ShieldAlert, Wallet, type LucideIcon } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { initials } from '@/lib/format'
@@ -11,10 +11,10 @@ interface Section {
   href: string
 }
 
-// "Needs attention" (the moderation queue) is deferred with no slice, so it is left out entirely.
 const SECTIONS: Section[] = [
   { label: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
   { label: 'Requests', icon: Inbox, href: '/requests' },
+  { label: 'Needs attention', icon: ShieldAlert, href: '/attention' },
   { label: 'Bookings', icon: Calendar, href: '/bookings' },
   { label: 'Catalogue', icon: BookOpen, href: '/catalogue' },
   { label: 'Resources', icon: DoorOpen, href: '/resources' },
@@ -26,15 +26,19 @@ const SECTIONS: Section[] = [
  * highlights the section it was opened from. Without it (or null) the section whose path is the current one is highlighted.
  */
 export function Sidebar({
-  userName, onLogOut, requestCount, activeHref,
+  userName, onLogOut, requestCount, attentionCount = 0, activeHref,
 }: {
   userName: string
   onLogOut: () => void
+  /** The Requests badge. */
   requestCount: number
+  /** The Needs attention badge. */
+  attentionCount?: number
   activeHref?: string | null
 }) {
   const pathname = usePathname()
   const current = activeHref ?? pathname
+  const badges: Record<string, number> = { '/requests': requestCount, '/attention': attentionCount }
   return (
     <nav
       aria-label="Console"
@@ -56,7 +60,8 @@ export function Sidebar({
 
       {SECTIONS.map(({ label, icon: Icon, href }) => {
         const active = current === href
-        const badge = href === '/requests' && requestCount > 0 ? requestCount : null
+        const count = badges[href] ?? 0
+        const badge = count > 0 ? count : null
         return (
           <Link
             key={label}

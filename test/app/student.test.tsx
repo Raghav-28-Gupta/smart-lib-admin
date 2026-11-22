@@ -44,6 +44,7 @@ const dayLabel = (days: number) =>
 
 const ADMIN = { id: 'a1', name: 'Librarian One', email: 'lib@thapar.edu', roll: 'Pending', role: 'admin' }
 const NO_REQUESTS = { requests: [], counts: { all: 0, borrow: 0, room: 0 } }
+const NO_ATTENTION = { items: [], counts: { all: 0, overdue: 0, fine_dispute: 0, report: 0 }, emailEnabled: false }
 
 function fine(over: Partial<AdminFine> & Pick<AdminFine, 'id'>): AdminFine {
   return {
@@ -88,6 +89,7 @@ function studentApi(answer: () => Response | Promise<Response>, routes: Record<s
   return mockFetch({
     'GET /auth/me': () => json(200, ADMIN),
     'GET /admin/requests': () => json(200, NO_REQUESTS),
+    'GET /admin/attention': () => json(200, NO_ATTENTION),
     'GET /admin/students/s1': answer,
     ...routes,
   })
@@ -260,6 +262,7 @@ describe('Student page', () => {
     ['bookings', 'Bookings'],
     ['requests', 'Requests'],
     ['catalogue', 'Catalogue'],
+    ['attention', 'Needs attention'],
   ])('?from=%s shows "%s / <name>" and highlights that section', async (from, label) => {
     nav.search = `from=${from}`
     studentApi(() => json(200, ADITI))

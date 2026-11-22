@@ -3,13 +3,14 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ConsoleLayout from '@/app/(console)/layout'
 import { writeToken } from '@/lib/api'
+import type { AttentionQueue } from '@/lib/attention'
 import type { PendingRequests } from '@/lib/requests'
 import { eventStream, json, mockFetch } from '../helpers'
 
 // One stable replace, as in console-layout.test.tsx: ConsoleGuard's effect depends on it,
 // so a fresh vi.fn() per useRouter() call would re-run the session check on every render.
-const nav = vi.hoisted(() => ({ replace: vi.fn() }))
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: nav.replace }), usePathname: () => '/dashboard' }))
+const nav = vi.hoisted(() => ({ replace: vi.fn(), pathname: '/dashboard' }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: nav.replace }), usePathname: () => nav.pathname }))
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }))
@@ -30,9 +31,41 @@ const WAITING: PendingRequests = {
   counts: { all: 2, borrow: 1, room: 1 },
 }
 
+const DUE = new Date(Date.now() - 3 * 86_400_000).toISOString()
+const ATTENTION: AttentionQueue = {
+  items: [
+    {
+      id: 'loan-1', kind: 'overdue', student: student(1), waitingSince: DUE,
+      overdue: { loanId: 'loan-1', title: 'Clean Code', dueAt: DUE, daysOverdue: 3, amount: 30, lastNotice: null, escalated: false },
+    },
+  ],
+  counts: { all: 1, overdue: 1, fine_dispute: 0, report: 0 },
+  emailEnabled: false,
+}
+
 describe('console shell', () => {
   afterEach(() => {
     document.title = ''
+    nav.pathname = '/dashboard'
+  })
+
+  it('titles /attention "Needs attention" and shows the queue count on its sidebar entry, apart from the Requests count', async () => {
+    writeToken('t')
+    nav.pathname = '/attention'
+    mockFetch({
+      'GET /auth/me': () => json(200, ADMIN),
+      'GET /admin/requests': () => json(200, WAITING),
+      'GET /admin/attention': () => json(200, ATTENTION),
+      'GET /admin/events': () => eventStream().response,
+    })
+
+    render(<ConsoleLayout><p>page</p></ConsoleLayout>)
+
+    expect(await screen.findByText('page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Needs attention' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('link', { name: /Needs attention/ })).toHaveTextContent('1'))
+    expect(screen.getByRole('link', { name: /Needs attention/ })).toHaveAttribute('aria-current', 'page')
+    await waitFor(() => expect(screen.getByRole('link', { name: /Requests/ })).toHaveTextContent('2'))
   })
 
   it('shows the waiting count, goes live, and toasts a new request', async () => {
@@ -41,6 +74,7 @@ describe('console shell', () => {
     mockFetch({
       'GET /auth/me': () => json(200, ADMIN),
       'GET /admin/requests': () => json(200, WAITING),
+      'GET /admin/attention': () => json(200, ATTENTION),
       'GET /admin/events': () => stream.response,
     })
 

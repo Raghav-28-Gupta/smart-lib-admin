@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  clockTime, countDelta, initials, pageRange, pointsDelta, rupees, shortDay, slotRange, timeSpan, todayLabel, waitingLabel, weekdayShort,
+  clockTime, countDelta, dayCount, daysAgo, initials, pageRange, pointsDelta, rupees, shortDay, slotRange, timeSpan, todayLabel, waitingLabel,
+  weekdayShort, wholeDaysSince,
 } from '@/lib/format'
 
 describe('pointsDelta', () => {
@@ -108,5 +109,34 @@ describe('pageRange', () => {
 
   it('takes any noun', () => {
     expect(pageRange(1, 25, 60, ['student', 'students'])).toBe('1–25 of 60 students')
+  })
+})
+
+describe('whole days', () => {
+  const NOW = Date.now()
+  const before = (hours: number) => new Date(NOW - hours * 3_600_000).toISOString()
+
+  it('wholeDaysSince counts completed days: 0 under 24 hours, 1 at 24, 3 at 3 days and 5 hours', () => {
+    expect(wholeDaysSince(before(5), NOW)).toBe(0)
+    expect(wholeDaysSince(before(23.9), NOW)).toBe(0)
+    expect(wholeDaysSince(before(24), NOW)).toBe(1)
+    expect(wholeDaysSince(before(77), NOW)).toBe(3)
+  })
+
+  it('wholeDaysSince is 0 for a time in the future or one that is not a date, never negative or NaN', () => {
+    expect(wholeDaysSince(before(-30), NOW)).toBe(0)
+    expect(wholeDaysSince('not a date', NOW)).toBe(0)
+  })
+
+  it('dayCount is singular for one: "1 day", "3 days", "0 days"', () => {
+    expect(dayCount(1)).toBe('1 day')
+    expect(dayCount(3)).toBe('3 days')
+    expect(dayCount(0)).toBe('0 days')
+  })
+
+  it('daysAgo says "today", "1 day ago" or "2 days ago"', () => {
+    expect(daysAgo(before(3), NOW)).toBe('today')
+    expect(daysAgo(before(25), NOW)).toBe('1 day ago')
+    expect(daysAgo(before(50), NOW)).toBe('2 days ago')
   })
 })

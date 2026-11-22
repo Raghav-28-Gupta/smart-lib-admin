@@ -21,6 +21,7 @@ export function DashboardView({ metrics }: { metrics: DashboardMetrics }) {
         <KpiCard kicker="Circulation, 7 days" value={`${c.borrows} / ${c.returns}`} note="Borrows / returns" />
         <KpiCard
           kicker="Overdue materials"
+          href="/attention?type=overdue"
           value={String(o.count)}
           valueStyle={{ color: 'var(--color-accent-700)' }}
           note={countDelta(o.count, o.countYesterday)}
