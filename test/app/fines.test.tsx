@@ -38,9 +38,13 @@ const ROHAN = { id: 's2', name: 'Rohan Verma', email: 'rohan@example.edu' }
 function fine(over: Partial<AdminFine> & Pick<AdminFine, 'id'>): AdminFine {
   return {
     kind: 'fine', student: ADITI, reason: 'overdue', item: 'Some Book', amount: 150, originalAmount: 150, status: 'outstanding',
-    date: at(-1, 8.5), note: null, recordedBy: null, canSettle: true, ...over,
+    date: at(-1, 8.5), note: null, recordedBy: null, canSettle: true, dispute: null, ...over,
   }
 }
+
+const DISPUTE = { id: 'd1', reason: 'I returned it on time', createdAt: at(-1, 9) }
+/** A fine with an open dispute: the server lists it as disputed (not outstanding or adjusted) and it can still be settled. */
+const DISPUTED = fine({ id: 'f20', student: ROHAN, item: 'Data Structures', amount: 120, originalAmount: 120, status: 'disputed', dispute: DISPUTE })
 
 // 20:30 UTC the day before is 02:00 the next morning in the library's zone: the row shows that day, not the UTC one.
 const OVERDUE = fine({ id: 'f1', student: ROHAN, reason: 'overdue', item: 'Clean Code', amount: 150, date: at(-1, 20.5) })
@@ -227,6 +231,56 @@ describe('Fines page', () => {
     expect(await screen.findByText('<b>bold</b> & more — A <i>B</i>')).toBeInTheDocument()
   })
 
+  it("a disputed row shows the Disputed tag, the student's reason, no Mark paid and a Waive / adjust button", async () => {
+    finesApi(() => json(200, page([OVERDUE, DISPUTED])))
+    renderPage()
+    await screen.findByRole('table')
+
+    const row = within(rowOf('Data Structures'))
+    // The Disputed tag takes the place of Outstanding, in the accent style.
+    expect(row.getByText('Disputed')).toHaveClass('tag', 'tag-accent')
+    expect(row.queryByText('Outstanding')).toBeNull()
+    expect(row.getByText('₹120')).toBeInTheDocument()
+
+    // The student's words sit under the tag, muted, with the whole reason in the title.
+    const reason = row.getByText('Student: "I returned it on time"')
+    expect(reason).toHaveClass('text-muted')
+    expect(reason).toHaveAttribute('title', 'I returned it on time')
+    expect(row.getByText('Disputed').closest('td')).toContainElement(reason)
+
+    // Mark paid is hidden while the dispute is open; Waive / adjust stays.
+    expect(row.queryByRole('button', { name: 'Mark paid' })).toBeNull()
+    expect(row.getByRole('button', { name: 'Waive / adjust' })).toBeEnabled()
+    expect(row.getAllByRole('button')).toHaveLength(1)
+
+    // An undisputed row beside it keeps both buttons and shows no dispute line.
+    const other = within(rowOf('Clean Code'))
+    expect(other.getByRole('button', { name: 'Mark paid' })).toBeEnabled()
+    expect(other.getByRole('button', { name: 'Waive / adjust' })).toBeEnabled()
+    expect(other.queryByText(/Student: /)).toBeNull()
+  })
+
+  it('a disputed row that was adjusted before keeps its note under the reason, and the reason shows as text', async () => {
+    const tricky = fine({
+      id: 'f21', item: 'Tricky Disputed', amount: 50, originalAmount: 150, status: 'disputed', note: 'Student showed the receipt', recordedBy: 'Meera Iyer',
+      dispute: { id: 'd2', reason: 'It was <b>never</b> late & "wrong"', createdAt: at(-1, 9) },
+    })
+    finesApi(() => json(200, page([tricky])))
+    renderPage()
+    await screen.findByRole('table')
+
+    const row = within(rowOf('Tricky Disputed'))
+    const reason = row.getByText('Student: "It was <b>never</b> late & "wrong""')
+    expect(reason.querySelector('b')).toBeNull()
+    expect(reason).toHaveAttribute('title', 'It was <b>never</b> late & "wrong"')
+    expect(row.getByText('₹50 (was ₹150)')).toBeInTheDocument()
+    const cell = row.getByText('Disputed').closest('td')!
+    expect(cell).toContainElement(row.getByText('Student showed the receipt'))
+    // The reason comes first, directly under the tag.
+    const lines = [...cell.querySelectorAll('.text-muted')].map((el) => el.textContent)
+    expect(lines).toEqual(['Student: "It was <b>never</b> late & "wrong""', 'Student showed the receipt'])
+  })
+
   it("the Fines page links the student's name to the student page with from=fines", async () => {
     finesApi(() => json(200, page([OVERDUE, ACCRUING])))
     renderPage()
@@ -306,15 +360,22 @@ describe('Fines page', () => {
     expect(await screen.findByText('Book 001')).toBeInTheDocument()
   })
 
-  it('the status select offers no Disputed option', async () => {
-    finesApi(() => json(200, page(ALL)))
+  it('the status select offers Disputed and requests status=disputed', async () => {
+    const fetch = finesApi((q) => json(200, page(q.get('status') === 'disputed' ? [DISPUTED] : ALL)))
     renderPage()
     await screen.findByRole('table')
     const options = within(statusSelect()).getAllByRole('option')
-    expect(options.map((o) => o.textContent)).toEqual(['All statuses', 'Accruing', 'Outstanding', 'Adjusted', 'Paid', 'Waived'])
-    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['all', 'accruing', 'outstanding', 'adjusted', 'paid', 'waived'])
-    expect(screen.queryByRole('option', { name: /disputed/i })).toBeNull()
+    // Disputed sits right after Outstanding.
+    expect(options.map((o) => o.textContent)).toEqual(['All statuses', 'Accruing', 'Outstanding', 'Disputed', 'Adjusted', 'Paid', 'Waived'])
+    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['all', 'accruing', 'outstanding', 'disputed', 'adjusted', 'paid', 'waived'])
     expect(statusSelect()).toHaveValue('all')
+
+    await userEvent.selectOptions(statusSelect(), 'disputed')
+    expect(statusSelect()).toHaveValue('disputed')
+    expect(fetch.query().get('status')).toBe('disputed')
+    expect(fetch.query().get('page')).toBe('1')
+    expect(await screen.findByText('Data Structures')).toBeInTheDocument()
+    expect(screen.queryByText('Clean Code')).toBeNull()
   })
 
   it('changing the status returns to page 1', async () => {
@@ -771,6 +832,171 @@ describe('Fines page actions', () => {
     await userEvent.click(saveButton(dialog))
     await screen.findByText('Fine adjusted.')
     expect(posts(fetch)[0][1]!.body).toBe('{"amount":20,"reason":"Second look"}')
+  })
+
+  it('adjusting a disputed fine sends its disputeId', async () => {
+    let served = 0
+    const resolved = fine({ ...DISPUTED, status: 'adjusted', amount: 60, note: 'Receipt shown', recordedBy: 'Meera Iyer', dispute: null })
+    const fetch = finesApi(() => json(200, page(++served === 1 ? [DISPUTED] : [resolved])), {
+      'POST /admin/fines/f20/adjust': () => json(200, resolved),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Data Structures', 'Waive / adjust'))
+
+    // The same dialog, with its own wording: a dispute adds nothing to it.
+    const dialog = screen.getByRole('dialog', { name: 'Waive or adjust this fine' })
+    expect(dialog).toHaveTextContent(
+      "Rohan Verma — Data Structures, currently ₹120. Enter the new amount (₹0 fully waives it) and a reason; this is recorded on the student's fine history.",
+    )
+    // Reused unchanged: the student's words stay in the row's cell, and the dialog does not repeat them (only the queue's does).
+    expect(dialog).not.toHaveTextContent(DISPUTE.reason)
+    await setAmount('60')
+    await userEvent.type(reasonField(dialog), ' Receipt shown ')
+    await userEvent.click(saveButton(dialog))
+
+    expect(await screen.findByText('Fine adjusted.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+    expect(String(posts(fetch)[0][0])).toMatch(/\/admin\/fines\/f20\/adjust$/)
+    // The dispute the librarian saw goes with the request, so the server can close it (and refuse a closed one).
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":60,"reason":"Receipt shown","disputeId":"d1"}')
+
+    // The refetched row is no longer disputed: its Disputed tag and the student's reason are gone and Mark paid is back.
+    const row = within(rowOf('Data Structures'))
+    expect(await row.findByText('Adjusted')).toBeInTheDocument()
+    expect(row.queryByText('Disputed')).toBeNull()
+    expect(row.queryByText(/Student: /)).toBeNull()
+    expect(listCalls(fetch)).toHaveLength(2)
+    await waitFor(() => expect(rowButton('Data Structures', 'Mark paid')).toBeEnabled())
+  })
+
+  it('waiving a disputed fine sends amount 0 with its disputeId and toasts "Fine waived."', async () => {
+    let served = 0
+    const waived = fine({ ...DISPUTED, status: 'waived', amount: 0, canSettle: false, note: 'Returned on time', recordedBy: 'Meera Iyer', dispute: null })
+    const fetch = finesApi(() => json(200, page(++served === 1 ? [DISPUTED] : [waived])), {
+      'POST /admin/fines/f20/adjust': () => json(200, waived),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Data Structures', 'Waive / adjust'))
+    await setAmount('0')
+    await userEvent.type(reasonField(screen.getByRole('dialog')), 'Returned on time')
+    await userEvent.click(saveButton())
+
+    expect(await screen.findByText('Fine waived.')).toBeInTheDocument()
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":0,"reason":"Returned on time","disputeId":"d1"}')
+    expect(await within(rowOf('Data Structures')).findByText('Waived')).toBeInTheDocument()
+  })
+
+  it('adjusting an undisputed fine sends none', async () => {
+    const adjusted = adjustedTo(OVERDUE, 50)
+    const fetch = finesApi(() => json(200, page([OVERDUE, DISPUTED])), {
+      'POST /admin/fines/f1/adjust': () => json(200, adjusted),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    // The disputed row beside it must not lend its dispute to this one.
+    await userEvent.click(rowButton('Clean Code', 'Waive / adjust'))
+    await setAmount('50')
+    await userEvent.type(reasonField(screen.getByRole('dialog')), 'Student showed the receipt')
+    await userEvent.click(saveButton())
+
+    expect(await screen.findByText('Fine adjusted.')).toBeInTheDocument()
+    expect(posts(fetch)).toHaveLength(1)
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":50,"reason":"Student showed the receipt"}')
+    expect(JSON.parse(String(posts(fetch)[0][1]!.body))).not.toHaveProperty('disputeId')
+  })
+
+  it(`a 409 "This fine was just disputed…" shows the server's message, refetches, and the row then shows the dispute`, async () => {
+    // A page loaded before the student disputed: the row looks undisputed, so the request names no dispute.
+    const disputed = fine({ ...OVERDUE, status: 'disputed', dispute: DISPUTE })
+    const adjusted = adjustedTo(OVERDUE, 60)
+    // The list: undisputed, then disputed after the refusal, then adjusted after the second try.
+    const lists = [[OVERDUE], [disputed], [adjusted]]
+    let served = 0
+    let writes = 0
+    const fetch = finesApi(() => json(200, page(lists[Math.min(served++, lists.length - 1)])), {
+      'POST /admin/fines/f1/adjust': () =>
+        ++writes === 1 ? json(409, { error: 'This fine was just disputed. Read the dispute before changing the fine.' }) : json(200, adjusted),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Clean Code', 'Waive / adjust'))
+    await setAmount('60')
+    await userEvent.type(reasonField(screen.getByRole('dialog')), 'Receipt shown')
+    await userEvent.click(saveButton())
+
+    expect(await screen.findByText('This fine was just disputed. Read the dispute before changing the fine.')).toBeInTheDocument()
+    expect(screen.queryByText('Fine adjusted.')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull() // the librarian reads the row, not a dialog over it
+    expect(posts(fetch)).toHaveLength(1)
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":60,"reason":"Receipt shown"}')
+
+    // The list is fetched again and the row now shows the dispute, with no Mark paid.
+    const row = within(rowOf('Clean Code'))
+    expect(await row.findByText('Disputed')).toHaveClass('tag-accent')
+    expect(row.getByText('Student: "I returned it on time"')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    expect(row.queryByRole('button', { name: 'Mark paid' })).toBeNull()
+    await waitFor(() => expect(rowButton('Clean Code', 'Waive / adjust')).toBeEnabled())
+
+    // Having read it, the librarian adjusts again: this time the dispute's id goes along and the server accepts.
+    await userEvent.click(rowButton('Clean Code', 'Waive / adjust'))
+    await setAmount('60')
+    await userEvent.type(reasonField(screen.getByRole('dialog')), 'Receipt shown')
+    await userEvent.click(saveButton())
+    expect(await screen.findByText('Fine adjusted.')).toBeInTheDocument()
+    expect(posts(fetch)).toHaveLength(2)
+    expect(posts(fetch)[1][1]!.body).toBe('{"amount":60,"reason":"Receipt shown","disputeId":"d1"}')
+  })
+
+  it(`a 409 "This dispute was already resolved." shows the server's message and refetches`, async () => {
+    // Someone else closed the dispute while this page was open.
+    let served = 0
+    const resolved = fine({ ...DISPUTED, status: 'adjusted', amount: 90, note: 'Settled by a colleague', recordedBy: 'Kiran Rao', dispute: null })
+    const fetch = finesApi(() => json(200, page(++served === 1 ? [DISPUTED] : [resolved])), {
+      'POST /admin/fines/f20/adjust': () => json(409, { error: 'This dispute was already resolved.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Data Structures', 'Waive / adjust'))
+    await setAmount('60')
+    await userEvent.type(reasonField(screen.getByRole('dialog')), 'Receipt shown')
+    await userEvent.click(saveButton())
+
+    expect(await screen.findByText('This dispute was already resolved.')).toBeInTheDocument()
+    expect(screen.queryByText('Fine adjusted.')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)[0][1]!.body).toBe('{"amount":60,"reason":"Receipt shown","disputeId":"d1"}')
+
+    const row = within(rowOf('Data Structures'))
+    expect(await row.findByText('Adjusted')).toBeInTheDocument()
+    expect(row.queryByText('Disputed')).toBeNull()
+    expect(listCalls(fetch)).toHaveLength(2)
+  })
+
+  it(`a 409 "This fine is being disputed. Resolve the dispute first." on Mark paid shows the server's message, and the row then shows the dispute`, async () => {
+    let served = 0
+    const disputed = fine({ ...OVERDUE, status: 'disputed', dispute: DISPUTE })
+    const fetch = finesApi(() => json(200, page(++served === 1 ? [OVERDUE] : [disputed])), {
+      'POST /admin/fines/f1/paid': () => json(409, { error: 'This fine is being disputed. Resolve the dispute first.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Clean Code', 'Mark paid'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Mark paid' }))
+
+    expect(await screen.findByText('This fine is being disputed. Resolve the dispute first.')).toBeInTheDocument()
+    expect(screen.queryByText('Fine marked as paid.')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    const row = within(rowOf('Clean Code'))
+    expect(await row.findByText('Disputed')).toBeInTheDocument()
+    expect(row.getByText('Student: "I returned it on time"')).toBeInTheDocument()
+    expect(listCalls(fetch)).toHaveLength(2)
+    expect(row.queryByRole('button', { name: 'Mark paid' })).toBeNull()
+    await waitFor(() => expect(row.getByRole('button', { name: 'Waive / adjust' })).toBeEnabled())
   })
 
   it("a 409 shows the server's message and refetches", async () => {

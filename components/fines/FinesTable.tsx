@@ -12,8 +12,9 @@ const REASON_LABELS: Record<AdminFine['reason'], string> = {
 /**
  * The canvas's fines table. A fine that was ever lowered shows the amount it was, and under its tag the
  * librarian's reason; an adjusted or waived row adds who recorded it, a paid one shows the reason alone.
- * Mark paid and Waive / adjust show only where the server says the fine can still be settled; `busy`
- * disables them all while a change is settling.
+ * Mark paid and Waive / adjust show only where the server says the fine can still be settled, and Mark paid
+ * not while the fine is disputed (the server refuses it: the dispute is resolved first, by Waive / adjust here or
+ * from Needs attention); `busy` disables them all while a change is settling.
  */
 export function FinesTable({
   fines, busy, onMarkPaid, onAdjust,
@@ -52,9 +53,11 @@ export function FinesTable({
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   {f.canSettle && (
                     <>
-                      <button type="button" className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => onMarkPaid(f)}>
-                        Mark paid
-                      </button>
+                      {!f.dispute && (
+                        <button type="button" className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => onMarkPaid(f)}>
+                          Mark paid
+                        </button>
+                      )}
                       <button type="button" className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} disabled={busy} onClick={() => onAdjust(f)}>
                         Waive / adjust
                       </button>

@@ -49,7 +49,7 @@ const NO_ATTENTION = { items: [], counts: { all: 0, overdue: 0, fine_dispute: 0,
 function fine(over: Partial<AdminFine> & Pick<AdminFine, 'id'>): AdminFine {
   return {
     kind: 'fine', student: { id: 's1', name: 'Aditi Sharma', email: 'aditi@example.edu' }, reason: 'overdue', item: 'Some Book', amount: 40,
-    originalAmount: 40, status: 'outstanding', date: at(-2), note: null, recordedBy: null, canSettle: true, ...over,
+    originalAmount: 40, status: 'outstanding', date: at(-2), note: null, recordedBy: null, canSettle: true, dispute: null, ...over,
   }
 }
 

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, writeToken } from '@/lib/api'
 import {
-  escalateLoan, fetchAttention, noticeLine, overdueDetail, overdueSummary, remindLoan, waitingText,
-  type AttentionQueue, type LastNotice, type OverdueDetails,
+  confirmReport, disputeSummary, dismissReport, escalateLoan, fetchAttention, fineFromDispute, noticeLine, overdueDetail,
+  overdueSummary, remindLoan, reportCategoryLabel, reportSummary, upholdDispute, waitingText,
+  type AttentionQueue, type DisputeDetails, type FineDisputeItem, type LastNotice, type OverdueDetails, type ReportDetails,
 } from '@/lib/attention'
 import { json, mockFetch } from '../helpers'
 
@@ -147,5 +148,193 @@ describe('overdue card text', () => {
 
   it('details only the amount when nothing was sent yet', () => {
     expect(overdueDetail(overdue({ amount: 180 }), NOW)).toBe('₹180 so far.')
+  })
+})
+
+describe('upholdDispute', () => {
+  it("POSTs to the dispute's uphold route with the token, the note trimmed, and {} when it is blank", async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/disputes/d-1/uphold': () => json(200, { id: 'd-1' }) })
+    await expect(upholdDispute('d-1', '  The receipt is for another book \n')).resolves.toEqual({ id: 'd-1' })
+    await upholdDispute('d-1', '')
+    await upholdDispute('d-1', '  \n ')
+    expect(fetch.mock.calls.map(([, init]) => init!.body)).toEqual(['{"note":"The receipt is for another book"}', '{}', '{}'])
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('escapes the dispute id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/disputes/a%2Fb/uphold': () => json(200, {}) })
+    await upholdDispute('a/b', '')
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/disputes\/a%2Fb\/uphold$/)
+  })
+
+  it("passes the server's refusals through", async () => {
+    writeToken('t')
+    mockFetch({
+      'POST /admin/disputes/d-1/uphold': () => json(409, { error: 'This dispute was already resolved.' }),
+      'POST /admin/disputes/d-2/uphold': () => json(404, { error: 'Dispute not found' }),
+    })
+    const resolved = await upholdDispute('d-1', '').catch((e: unknown) => e)
+    expect(resolved).toBeInstanceOf(ApiError)
+    expect([(resolved as ApiError).status, (resolved as ApiError).message]).toEqual([409, 'This dispute was already resolved.'])
+    const missing = await upholdDispute('d-2', '').catch((e: unknown) => e)
+    expect([(missing as ApiError).status, (missing as ApiError).message]).toEqual([404, 'Dispute not found'])
+  })
+})
+
+describe('fine dispute card text and fineFromDispute', () => {
+  const details = (over: Partial<DisputeDetails['fine']> = {}): DisputeDetails => ({
+    disputeId: 'd-1',
+    studentReason: 'I returned it on Monday.',
+    fine: { id: 'f-1', item: 'Clean Code', reason: 'overdue', amount: 150, originalAmount: 150, status: 'outstanding', ...over },
+  })
+  const item = (over: Partial<DisputeDetails['fine']> = {}): FineDisputeItem => ({
+    id: 'item-1', kind: 'fine_dispute', student: { id: 's2', name: 'Rohan Verma', email: 'rohan@example.edu' }, waitingSince: daysAgoIso(2),
+    dispute: details(over),
+  })
+
+  it('summarises as "Disputes ₹<amount> <reason> fine on <item>", naming each reason as the Fines table does', () => {
+    expect(disputeSummary(details())).toBe('Disputes ₹150 Overdue fine on Clean Code')
+    expect(disputeSummary(details({ reason: 'no_show', amount: 40, item: 'Group Room 201' }))).toBe('Disputes ₹40 No-show fine on Group Room 201')
+    expect(disputeSummary(details({ reason: 'lost', amount: 250, item: 'Sapiens' }))).toBe('Disputes ₹250 Lost book fine on Sapiens')
+  })
+
+  it('shows a reason this console does not know as it came, not as undefined', () => {
+    expect(disputeSummary(details({ reason: 'damaged' as 'lost' }))).toBe('Disputes ₹150 damaged fine on Clean Code')
+  })
+
+  it('builds the fine the adjust dialog needs, carrying the dispute the librarian is looking at', () => {
+    const disputed = item({ amount: 100, originalAmount: 150, status: 'adjusted' })
+    expect(fineFromDispute(disputed)).toEqual({
+      id: 'f-1', kind: 'fine', student: disputed.student, reason: 'overdue', item: 'Clean Code',
+      amount: 100, originalAmount: 150, status: 'adjusted',
+      // Not read by the adjust dialog: obvious stand-ins.
+      date: disputed.waitingSince, note: null, recordedBy: null,
+      canSettle: true,
+      dispute: { id: 'd-1', reason: 'I returned it on Monday.', createdAt: disputed.waitingSince },
+    })
+  })
+})
+
+describe('confirmReport', () => {
+  it("POSTs to the report's confirm route with the token, the outcome, and the note trimmed", async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/reports/r-1/confirm': () => json(200, { id: 'r-1' }) })
+    await expect(confirmReport('r-1', { outcome: 'maintenance', note: '  Cover torn off \n' })).resolves.toEqual({ id: 'r-1' })
+    await confirmReport('r-1', { outcome: 'lost', note: 'Not on the shelf' })
+    expect(fetch.mock.calls.map(([, init]) => init!.body)).toEqual([
+      '{"outcome":"maintenance","note":"Cover torn off"}',
+      '{"outcome":"lost","note":"Not on the shelf"}',
+    ])
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('leaves the note out when it is blank, and the outcome out when there is none (a resource report)', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/reports/r-1/confirm': () => json(200, { id: 'r-1' }) })
+    await confirmReport('r-1', { outcome: 'maintenance', note: '' })
+    await confirmReport('r-1', { outcome: 'maintenance', note: '  \n ' })
+    await confirmReport('r-1', { outcome: 'lost' })
+    await confirmReport('r-1', { note: ' The projector shows no picture. ' })
+    await confirmReport('r-1', {})
+    expect(fetch.mock.calls.map(([, init]) => init!.body)).toEqual([
+      '{"outcome":"maintenance"}',
+      '{"outcome":"maintenance"}',
+      '{"outcome":"lost"}',
+      '{"note":"The projector shows no picture."}',
+      '{}',
+    ])
+  })
+
+  it('escapes the report id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/reports/a%2Fb/confirm': () => json(200, {}) })
+    await confirmReport('a/b', {})
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/reports\/a%2Fb\/confirm$/)
+  })
+
+  it("passes the server's refusals through", async () => {
+    writeToken('t')
+    mockFetch({
+      'POST /admin/reports/r-1/confirm': () => json(409, { error: 'This copy is now on loan.' }),
+      'POST /admin/reports/r-2/confirm': () => json(409, { error: 'This report was already resolved.' }),
+    })
+    const onLoan = await confirmReport('r-1', { outcome: 'maintenance' }).catch((e: unknown) => e)
+    expect(onLoan).toBeInstanceOf(ApiError)
+    expect([(onLoan as ApiError).status, (onLoan as ApiError).message]).toEqual([409, 'This copy is now on loan.'])
+    const resolved = await confirmReport('r-2', {}).catch((e: unknown) => e)
+    expect([(resolved as ApiError).status, (resolved as ApiError).message]).toEqual([409, 'This report was already resolved.'])
+  })
+})
+
+describe('dismissReport', () => {
+  it("POSTs to the report's dismiss route with the token, the note trimmed, and {} when it is blank", async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/reports/r-1/dismiss': () => json(200, { id: 'r-1' }) })
+    await expect(dismissReport('r-1', '  The cover was already like that \n')).resolves.toEqual({ id: 'r-1' })
+    await dismissReport('r-1', '')
+    await dismissReport('r-1', '  \n ')
+    expect(fetch.mock.calls.map(([, init]) => init!.body)).toEqual(['{"note":"The cover was already like that"}', '{}', '{}'])
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('escapes the report id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/reports/a%2Fb/dismiss': () => json(200, {}) })
+    await dismissReport('a/b', '')
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/reports\/a%2Fb\/dismiss$/)
+  })
+
+  it("passes the server's refusal through", async () => {
+    writeToken('t')
+    mockFetch({ 'POST /admin/reports/r-1/dismiss': () => json(409, { error: 'This report was already resolved.' }) })
+    const resolved = await dismissReport('r-1', '').catch((e: unknown) => e)
+    expect(resolved).toBeInstanceOf(ApiError)
+    expect([(resolved as ApiError).status, (resolved as ApiError).message]).toEqual([409, 'This report was already resolved.'])
+  })
+})
+
+describe('problem report card text', () => {
+  const copy = { id: 'c-1', barcode: 'SL-000123', title: 'Clean Code' }
+  const resource = { id: 'res-1', name: 'Group Room 201' }
+  const report = (over: Partial<ReportDetails> = {}): ReportDetails => ({
+    reportId: 'r-1', target: 'copy', category: 'damaged', note: null, copy, ...over,
+  })
+
+  it('names the categories as the card does', () => {
+    expect(
+      ['damaged', 'missing_pages', 'not_working', 'dirty', 'other'].map(reportCategoryLabel),
+    ).toEqual(['Damaged', 'Missing pages', 'Not working', 'Dirty', 'Other'])
+  })
+
+  it('shows a category this console does not know as the server named it, capitalized, and never a built-in property', () => {
+    expect(reportCategoryLabel('wrong_spot')).toBe('Wrong_spot')
+    expect(reportCategoryLabel('constructor')).toBe('Constructor')
+    expect(reportCategoryLabel('__proto__')).toBe('__proto__')
+    expect(reportCategoryLabel('')).toBe('')
+  })
+
+  it('summarises a copy report as "Copy <barcode> of <title>, reported at return: <category>"', () => {
+    expect(reportSummary(report())).toBe('Copy SL-000123 of Clean Code, reported at return: Damaged')
+    expect(reportSummary(report({ category: 'missing_pages' }))).toBe('Copy SL-000123 of Clean Code, reported at return: Missing pages')
+    expect(reportSummary(report({ category: 'other' }))).toBe('Copy SL-000123 of Clean Code, reported at return: Other')
+  })
+
+  it('summarises a resource report as "<resource> — <category>"', () => {
+    const seat = report({ target: 'resource', category: 'not_working', copy: undefined, resource })
+    expect(reportSummary(seat)).toBe('Group Room 201 — Not working')
+    expect(reportSummary({ ...seat, category: 'dirty' })).toBe('Group Room 201 — Dirty')
+  })
+
+  it('still reads when the server leaves out the target it names', () => {
+    expect(reportSummary(report({ copy: undefined }))).toBe('A copy, reported at return: Damaged')
+    expect(reportSummary(report({ target: 'resource', category: 'dirty', copy: undefined }))).toBe('A resource — Dirty')
   })
 })

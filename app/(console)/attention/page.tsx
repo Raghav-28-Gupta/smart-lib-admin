@@ -4,17 +4,28 @@ import { useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useState } from 'react'
 import { AttentionCard } from '@/components/attention/AttentionCard'
 import { AttentionEmpty, AttentionError, AttentionFilterEmpty, AttentionSkeleton } from '@/components/attention/AttentionStates'
+import { ConfirmCopyReportDialog } from '@/components/attention/ConfirmCopyReportDialog'
+import { DismissDialog } from '@/components/attention/DismissDialog'
 import { EscalateDialog } from '@/components/attention/EscalateDialog'
 import { RemindDialog } from '@/components/attention/RemindDialog'
+import { StudentWords } from '@/components/attention/StudentWords'
+import { UpholdDialog } from '@/components/attention/UpholdDialog'
 import { useAttentionActions } from '@/components/attention/useAttentionActions'
-import type { AttentionKind, OverdueItem } from '@/lib/attention'
+import { AdjustFineDialog } from '@/components/fines/AdjustFineDialog'
+import { OfflineDialog } from '@/components/resources/OfflineDialog'
+import { fineFromDispute, type AttentionKind, type FineDisputeItem, type OverdueItem, type ReportItem } from '@/lib/attention'
 import { useAttention } from '@/lib/attentionContext'
 
 type Filter = 'all' | AttentionKind
 
 // The dialog holds the item as the librarian opened it, not the live list's: a refusal refetches, and the card may be
-// gone by then (the loan was returned), but the dialog stays up with its note until the librarian cancels or retries.
-type OpenDialog = null | { kind: 'remind' | 'escalate'; item: OverdueItem }
+// gone by then (the loan was returned, the dispute was resolved, the report was closed), but the dialog stays up with what
+// was typed until the librarian cancels or retries.
+type OpenDialog =
+  | null
+  | { kind: 'remind' | 'escalate'; item: OverdueItem }
+  | { kind: 'adjust' | 'uphold'; item: FineDisputeItem }
+  | { kind: 'confirmCopy' | 'takeOffline' | 'dismiss'; item: ReportItem }
 
 // No No-show chip: the canvas had one, but a no-show dispute is not part of this queue.
 const CHIPS: { value: Filter; label: string; plural: string }[] = [
@@ -66,7 +77,10 @@ function AttentionView({ type }: { type: string | null }) {
   if (state.kind === 'loading') return <AttentionSkeleton />
   if (state.kind === 'error') return <AttentionError onRetry={retry} />
 
-  const { items, counts, emailEnabled } = state.data
+  const { counts, emailEnabled } = state.data
+  // A kind this console does not know (a newer server's, such as a no-show dispute) has no card to draw: leave it out rather
+  // than fail the page. `counts` is the server's, so All and the sidebar badge still count it until this console learns the kind.
+  const items = state.data.items.filter((item) => CHIPS.some((chip) => chip.value === item.kind))
   const shown = filter === 'all' ? items : items.filter((item) => item.kind === filter)
 
   return (
@@ -97,6 +111,11 @@ function AttentionView({ type }: { type: string | null }) {
               busy={actions.busy}
               onRemind={(overdue) => setDialog({ kind: 'remind', item: overdue })}
               onEscalate={(overdue) => setDialog({ kind: 'escalate', item: overdue })}
+              onAdjust={(dispute) => setDialog({ kind: 'adjust', item: dispute })}
+              onUphold={(dispute) => setDialog({ kind: 'uphold', item: dispute })}
+              onConfirmCopy={(report) => setDialog({ kind: 'confirmCopy', item: report })}
+              onTakeOffline={(report) => setDialog({ kind: 'takeOffline', item: report })}
+              onDismiss={(report) => setDialog({ kind: 'dismiss', item: report })}
             />
           ))}
         </div>
@@ -115,6 +134,45 @@ function AttentionView({ type }: { type: string | null }) {
           item={dialog.item}
           onCancel={close}
           onConfirm={(note) => closeWhenSent(actions.escalate(dialog.item, note))}
+        />
+      )}
+      {dialog?.kind === 'adjust' && (
+        <AdjustFineDialog
+          fine={fineFromDispute(dialog.item)}
+          context={<StudentWords label="The student's reason" words={dialog.item.dispute.studentReason} />}
+          onCancel={close}
+          onConfirm={(amount, reason) => closeWhenSent(actions.adjust(dialog.item, amount, reason))}
+        />
+      )}
+      {dialog?.kind === 'uphold' && (
+        <UpholdDialog
+          item={dialog.item}
+          onCancel={close}
+          onConfirm={(note) => closeWhenSent(actions.uphold(dialog.item, note))}
+        />
+      )}
+      {dialog?.kind === 'confirmCopy' && (
+        <ConfirmCopyReportDialog
+          item={dialog.item}
+          onCancel={close}
+          onConfirm={(outcome, note) => closeWhenSent(actions.confirmCopy(dialog.item, outcome, note))}
+        />
+      )}
+      {dialog?.kind === 'takeOffline' && (
+        // The slice 4 dialog, started with the student's own words. The queue names the resource but does not count its
+        // bookings, so the dialog leaves that sentence out.
+        <OfflineDialog
+          resource={{ name: dialog.item.report.resource?.name ?? 'This resource' }}
+          initialNote={dialog.item.report.note ?? ''}
+          onCancel={close}
+          onConfirm={(note) => closeWhenSent(actions.takeResourceOffline(dialog.item, note))}
+        />
+      )}
+      {dialog?.kind === 'dismiss' && (
+        <DismissDialog
+          item={dialog.item}
+          onCancel={close}
+          onConfirm={(note) => closeWhenSent(actions.dismiss(dialog.item, note))}
         />
       )}
     </>

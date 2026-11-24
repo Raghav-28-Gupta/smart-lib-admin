@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AttentionPage from '@/app/(console)/attention/page'
 import { ToastProvider } from '@/components/Toasts'
 import { writeToken } from '@/lib/api'
-import type { AttentionItem, AttentionQueue, LastNotice, OverdueItem } from '@/lib/attention'
+import type { AttentionItem, AttentionQueue, FineDisputeItem, LastNotice, OverdueItem, ReportItem } from '@/lib/attention'
 import { AttentionProvider } from '@/lib/attentionContext'
 import type { LiveHandlers } from '@/lib/live'
 import { LiveProvider } from '@/lib/liveContext'
@@ -49,14 +49,53 @@ function overdue(
   }
 }
 
+// A student's dispute of a fine. The queue item's id differs from the dispute's own id on purpose: a write must name the
+// dispute (and the fine) from `dispute`, never the item.
+function dispute(
+  disputeId: string, student: AttentionItem['student'], item: string, days: number, amount: number, studentReason: string,
+  reason: FineDisputeItem['dispute']['fine']['reason'] = 'overdue', fineId = `f-${disputeId}`,
+): FineDisputeItem {
+  return {
+    id: `item-${disputeId}`, kind: 'fine_dispute', student, waitingSince: daysAgoIso(days),
+    dispute: { disputeId, studentReason, fine: { id: fineId, item, reason, amount, originalAmount: amount, status: 'outstanding' } },
+  }
+}
+
+// A student's problem report on a copy (reported when it was returned) or on a resource. The item's id is the report's id,
+// which is what the confirm and dismiss routes take.
+function copyReport(
+  reportId: string, student: AttentionItem['student'], days: number, category: string, note: string | null,
+  copy: { id: string; barcode: string; title: string } = { id: 'c1', barcode: 'SL-000123', title: 'Clean Code' },
+): ReportItem {
+  return {
+    id: reportId, kind: 'report', student, waitingSince: daysAgoIso(days),
+    report: { reportId, target: 'copy', category, note, copy },
+  }
+}
+
+function resourceReport(
+  reportId: string, student: AttentionItem['student'], days: number, category: string, note: string | null,
+  resource: { id: string; name: string } = { id: 'res1', name: 'Group Room 201' },
+): ReportItem {
+  return {
+    id: reportId, kind: 'report', student, waitingSince: daysAgoIso(days),
+    report: { reportId, target: 'resource', category, note, resource },
+  }
+}
+
 // Oldest waiting first, as the server answers.
-const CLEAN_CODE = overdue('l1', ADITI, 'Clean Code', 3, 30, { kind: 'reminder', at: daysAgoIso(2), emailStatus: 'sent' })
+const CLEAN_CODE =overdue('l1', ADITI, 'Clean Code', 3, 30, { kind: 'reminder', at: daysAgoIso(2), emailStatus: 'sent' })
 const NETWORKS = overdue('l2', ROHAN, 'Computer Networks', 2, 20, { kind: 'escalation', at: daysAgoIso(1), emailStatus: 'skipped' }, true)
 const SAPIENS = overdue('l3', MEERA, 'Sapiens', 1, 10)
 
 const queue = (items: AttentionItem[], over: Partial<AttentionQueue> = {}): AttentionQueue => ({
   items,
-  counts: { all: items.length, overdue: items.filter((i) => i.kind === 'overdue').length, fine_dispute: 0, report: 0 },
+  counts: {
+    all: items.length,
+    overdue: items.filter((i) => i.kind === 'overdue').length,
+    fine_dispute: items.filter((i) => i.kind === 'fine_dispute').length,
+    report: items.filter((i) => i.kind === 'report').length,
+  },
   emailEnabled: true,
   ...over,
 })
@@ -176,6 +215,23 @@ describe('Needs attention page', () => {
     expect(chip('Overdue follow-ups (1)')).toBeInTheDocument()
     expect(chip('Fine disputes (3)')).toBeInTheDocument()
     expect(chip('Maintenance flags (1)')).toBeInTheDocument()
+  })
+
+  it('an item of a kind this console does not know (a newer server) is left out: the page still renders, and the known items show', async () => {
+    // Spec section 2: the queue is built so that a kind can be added later, and the backend deploys before this console.
+    const unknown = {
+      id: 'n1', kind: 'no_show_dispute', student: ROHAN, waitingSince: daysAgoIso(2), noShow: { bookingId: 'b1' },
+    } as unknown as AttentionItem
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([CLEAN_CODE, unknown, SAPIENS])) })
+    renderPage()
+
+    expect(await screen.findByText('Clean Code — 3 days overdue')).toBeInTheDocument()
+    expect(screen.getByText('Sapiens — 1 day overdue')).toBeInTheDocument()
+    expect(screen.getAllByText(/ days? overdue$/)).toHaveLength(2)
+    expect(screen.queryByText("Couldn't load the queue")).toBeNull()
+    // The counts are the server's, so the unknown item still counts in All (and in the sidebar badge, which reads the same number).
+    expect(chip('All (3)')).toBeInTheDocument()
+    expect(chip('Overdue follow-ups (2)')).toBeInTheDocument()
   })
 
   it('?type=fine_dispute and ?type=report select their chips; an unknown type falls back to All', async () => {
@@ -309,21 +365,23 @@ describe('Needs attention page', () => {
   })
 })
 
+// Shared by the overdue and the fine dispute actions below.
+type Fetch = ReturnType<typeof mockFetch>
+const writes = (fetch: Fetch) => fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
+const reads = (fetch: Fetch) => fetch.mock.calls.filter(([, init]) => (init?.method ?? 'GET') === 'GET')
+const gate = () => {
+  let open!: () => void
+  const promise = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { promise, open }
+}
+const dialogOf = (name: string) => screen.getByRole('dialog', { name })
+const confirmOf = (dialog: HTMLElement, label: string) => within(dialog).getByRole('button', { name: label })
+const inCard = (summary: string) => within(cardOf(summary))
+const buttonOf = (summary: string, name: string) => inCard(summary).getByRole('button', { name })
+
 describe('Needs attention overdue actions', () => {
-  type Fetch = ReturnType<typeof mockFetch>
-  const writes = (fetch: Fetch) => fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
-  const reads = (fetch: Fetch) => fetch.mock.calls.filter(([, init]) => (init?.method ?? 'GET') === 'GET')
-  const gate = () => {
-    let open!: () => void
-    const promise = new Promise<void>((resolve) => {
-      open = resolve
-    })
-    return { promise, open }
-  }
-  const dialogOf = (name: string) => screen.getByRole('dialog', { name })
-  const confirmOf = (dialog: HTMLElement, label: string) => within(dialog).getByRole('button', { name: label })
-  const inCard = (summary: string) => within(cardOf(summary))
-  const buttonOf = (summary: string, name: string) => inCard(summary).getByRole('button', { name })
   // The item as the server answers after a notice: the newest notice changes, and `escalated` once an escalation was sent.
   const noticed = (item: OverdueItem, lastNotice: LastNotice, escalated = item.overdue.escalated): OverdueItem => ({
     ...item, overdue: { ...item.overdue, lastNotice, escalated },
@@ -629,6 +687,1087 @@ describe('Needs attention overdue actions', () => {
 
     saving.open()
     expect(await screen.findByText('Reminder sent.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(writes(fetch)).toHaveLength(1)
+  })
+})
+
+describe('Needs attention fine disputes', () => {
+  const WORDS = 'I returned it on Monday; the desk never scanned it.'
+  // Oldest waiting first: D3 (3 days), D1 (2 days), D2 (1 day).
+  const D1 = dispute('d1', ROHAN, 'Clean Code', 2, 150, WORDS, 'overdue', 'f1')
+  const D2 = dispute('d2', MEERA, 'Group Room 201', 1, 40, 'I cancelled in the app, on time.', 'no_show', 'f2')
+  const D3 = dispute('d3', ADITI, 'Sapiens', 3, 250, 'The book was stolen from my bag.', 'lost', 'f3')
+  const D1_SUMMARY = 'Disputes ₹150 Overdue fine on Clean Code'
+  const D2_SUMMARY = 'Disputes ₹40 No-show fine on Group Room 201'
+  const D3_SUMMARY = 'Disputes ₹250 Lost book fine on Sapiens'
+  const UPHOLD_BODY = `The dispute is closed and the fine stands. ${D1_SUMMARY}.`
+  const CLEAN_CODE_SUMMARY = 'Clean Code — 3 days overdue'
+
+  const openAdjust = async (summary = D1_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Waive / adjust'))
+    return dialogOf('Waive or adjust this fine')
+  }
+  const openUphold = async (summary = D1_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Uphold fine'))
+    return dialogOf('Uphold this fine?')
+  }
+  /** Types a new amount (replacing the one shown) and a reason into the adjust dialog. */
+  async function fillAdjust(dialog: HTMLElement, amount: string, reason: string) {
+    const box = within(dialog).getByLabelText('New amount (₹)')
+    await userEvent.clear(box)
+    await userEvent.type(box, amount)
+    await userEvent.type(within(dialog).getByLabelText('Reason (required)'), reason)
+  }
+  const noteOf = (dialog: HTMLElement) => within(dialog).getByLabelText('Note (optional)')
+
+  it("a dispute card shows the tag, summary and the student's words", async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([D3, D1, D2])) })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const card = inCard(D1_SUMMARY)
+    expect(card.getByText('Fine dispute')).toHaveClass('tag')
+    expect(card.queryByText('Overdue follow-up')).toBeNull()
+    expect(card.getByText('waiting 2 days')).toBeInTheDocument()
+    expect(card.getByText(WORDS)).toBeInTheDocument()
+    expect(card.getByRole('button', { name: 'Waive / adjust' })).toBeEnabled()
+    expect(card.getByRole('button', { name: 'Uphold fine' })).toBeEnabled()
+    // None of an overdue card's actions.
+    expect(card.queryByRole('button', { name: 'Send reminder' })).toBeNull()
+    expect(card.queryByRole('button', { name: 'Escalate' })).toBeNull()
+
+    // The reason the fine was charged for, worded as the Fines page words it.
+    expect(screen.getByText(D2_SUMMARY)).toBeInTheDocument()
+    expect(screen.getByText(D3_SUMMARY)).toBeInTheDocument()
+    expect(screen.getAllByText('Fine dispute')).toHaveLength(3)
+    const summaries = screen.getAllByText(/^Disputes ₹/).map((el) => el.textContent)
+    expect(summaries).toEqual([D3_SUMMARY, D1_SUMMARY, D2_SUMMARY])
+  })
+
+  it("shows the student's words as text, never markup, and a long reason in full: no clamp, no tooltip standing in for the rest", async () => {
+    const markup = '<img src=x onerror="alert(1)"> <b>please</b> reconsider'
+    const long = `${'The desk never scanned it. '.repeat(11)}End.`.slice(0, 300)
+    const tricky = dispute('d4', ROHAN, 'Networks', 2, 60, markup)
+    const wordy = dispute('d5', MEERA, 'Compilers', 1, 90, long)
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([tricky, wordy])) })
+    const { container } = renderPage()
+    await screen.findByText('Disputes ₹60 Overdue fine on Networks')
+
+    expect(within(cardOf('Disputes ₹60 Overdue fine on Networks')).getByText(markup)).toBeInTheDocument()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('b')).toBeNull()
+
+    // All 300 characters are in the card's text, and nothing on the line hides any of it: a dispute is read before it is decided.
+    expect(long).toHaveLength(300)
+    const words = within(cardOf('Disputes ₹90 Overdue fine on Compilers')).getByText(long)
+    expect(words).toHaveTextContent(long)
+    expect(words.style.getPropertyValue('-webkit-line-clamp')).toBe('')
+    expect(words.style.display).not.toBe('-webkit-box')
+    expect(words.style.overflow).not.toBe('hidden')
+    expect(words).not.toHaveAttribute('title')
+  })
+
+  it("the Uphold dialog shows the student's words in full, as text, so the dispute is not closed unread", async () => {
+    const long = `${'The desk never scanned it. '.repeat(11)}End.`.slice(0, 300)
+    const markup = '<img src=x onerror="alert(1)"> <b>please</b> reconsider'
+    const wordy = dispute('d5', MEERA, 'Compilers', 1, 90, long)
+    const tricky = dispute('d4', ROHAN, 'Networks', 2, 60, markup)
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([tricky, wordy])) })
+    renderPage()
+    await screen.findByText('Disputes ₹90 Overdue fine on Compilers')
+
+    const dialog = await openUphold('Disputes ₹90 Overdue fine on Compilers')
+    expect(within(dialog).getByText(long)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('The dispute is closed and the fine stands. Disputes ₹90 Overdue fine on Compilers.')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    const other = await openUphold('Disputes ₹60 Overdue fine on Networks')
+    expect(within(other).getByText(markup)).toBeInTheDocument()
+    expect(other.querySelector('img')).toBeNull()
+    expect(other.querySelector('b')).toBeNull()
+    // Another dispute's words are not here.
+    expect(within(other).queryByText(long)).toBeNull()
+  })
+
+  it("the queue's adjust dialog shows the student's words in full, above the amount and reason the librarian types", async () => {
+    const long = `${'The desk never scanned it. '.repeat(11)}End.`.slice(0, 300)
+    const wordy = dispute('d5', MEERA, 'Compilers', 1, 90, long)
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([wordy, D1])) })
+    renderPage()
+    await screen.findByText('Disputes ₹90 Overdue fine on Compilers')
+
+    const dialog = await openAdjust('Disputes ₹90 Overdue fine on Compilers')
+    expect(within(dialog).getByText(long)).toBeInTheDocument()
+    // The dialog's own wording is as it was, and the words are not the reason field's text.
+    expect(dialog).toHaveTextContent(
+      "Meera Iyer — Compilers, currently ₹90. Enter the new amount (₹0 fully waives it) and a reason; this is recorded on the student's fine history.",
+    )
+    expect(within(dialog).getByLabelText('Reason (required)')).toHaveValue('')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    // Another dispute's dialog shows its own words only.
+    const second = await openAdjust()
+    expect(within(second).getByText(WORDS)).toBeInTheDocument()
+    expect(within(second).queryByText(long)).toBeNull()
+  })
+
+  it('the student link carries from=attention', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([D1])) })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+    expect(inCard(D1_SUMMARY).getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/s2?from=attention')
+  })
+
+  it('the Fine disputes chip counts them and shows only them', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([D3, CLEAN_CODE, D1, SAPIENS, D2])) })
+    const { unmount } = renderPage()
+    await screen.findByText(D1_SUMMARY)
+    expect(chip('All (5)')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('Overdue follow-ups (2)')).toBeInTheDocument()
+    expect(chip('Fine disputes (3)')).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('Maintenance flags (0)')).toBeInTheDocument()
+    expect(screen.getByText(CLEAN_CODE_SUMMARY)).toBeInTheDocument()
+
+    await userEvent.click(chip('Fine disputes (3)'))
+    expect(chip('Fine disputes (3)')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText(/^Disputes ₹/)).toHaveLength(3)
+    expect(screen.queryByText(CLEAN_CODE_SUMMARY)).toBeNull()
+    expect(screen.queryByText('Sapiens — 1 day overdue')).toBeNull()
+
+    // The other chip hides them again.
+    await userEvent.click(chip('Overdue follow-ups (2)'))
+    expect(screen.queryByText(D1_SUMMARY)).toBeNull()
+    expect(screen.getByText(CLEAN_CODE_SUMMARY)).toBeInTheDocument()
+
+    unmount()
+    nav.search = 'type=fine_dispute'
+    renderPage()
+    expect(await screen.findByRole('button', { name: 'Fine disputes (3)' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(D3_SUMMARY)).toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_CODE_SUMMARY)).toBeNull()
+  })
+
+  it('a chip with no cards says so whichever kind is queued, and the empty state is only for an empty queue', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([D1])) })
+    const only = renderPage()
+    await screen.findByText(D1_SUMMARY)
+    await userEvent.click(chip('Overdue follow-ups (0)'))
+    expect(screen.getByText('No overdue follow-ups waiting')).toBeInTheDocument()
+    expect(screen.queryByText("You're all caught up")).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filter' }))
+    expect(screen.getByText(D1_SUMMARY)).toBeInTheDocument()
+    only.unmount()
+
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([SAPIENS])) })
+    renderPage()
+    await screen.findByText('Sapiens — 1 day overdue')
+    await userEvent.click(chip('Fine disputes (0)'))
+    expect(screen.getByText('No fine disputes waiting')).toBeInTheDocument()
+    expect(screen.queryByText("You're all caught up")).toBeNull()
+  })
+
+  it('Waive / adjust opens the shared adjust dialog and sends the dispute id', async () => {
+    let current = queue([D1, D2])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/fines/f1/adjust': () => {
+        current = queue([D2])
+        return json(200, { id: 'f1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const dialog = await openAdjust()
+    expect(dialog).toHaveTextContent(
+      "Rohan Verma — Clean Code, currently ₹150. Enter the new amount (₹0 fully waives it) and a reason; this is recorded on the student's fine history.",
+    )
+    expect(within(dialog).getByLabelText('New amount (₹)')).toHaveValue(150)
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(writes(fetch)).toHaveLength(0)
+
+    await fillAdjust(dialog, '100', '  Receipt shown  ')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Fine adjusted.')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+    expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/fines\/f1\/adjust$/)
+    // The fine's id in the path, the dispute's in the body: the server closes that dispute with the adjustment.
+    expect(JSON.parse(writes(fetch)[0][1]!.body as string)).toEqual({ amount: 100, reason: 'Receipt shown', disputeId: 'd1' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText(D1_SUMMARY)).toBeNull()
+    expect(screen.getByText(D2_SUMMARY)).toBeInTheDocument()
+    expect(chip('Fine disputes (1)')).toBeInTheDocument()
+  })
+
+  it('waiving a disputed fine (amount 0) sends 0 with the dispute id and toasts "Fine waived."', async () => {
+    let current = queue([D1])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/fines/f1/adjust': () => {
+        current = queue([])
+        return json(200, { id: 'f1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const dialog = await openAdjust()
+    await fillAdjust(dialog, '0', 'Receipt shown')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText('Fine waived.')).toBeInTheDocument()
+    expect(JSON.parse(writes(fetch)[0][1]!.body as string)).toEqual({ amount: 0, reason: 'Receipt shown', disputeId: 'd1' })
+    expect(await screen.findByText("You're all caught up")).toBeInTheDocument()
+  })
+
+  it('Cancel in the adjust dialog and in the uphold dialog sends nothing', async () => {
+    const fetch = mockFetch({ 'GET /admin/attention': () => json(200, queue([D1])) })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const adjust = await openAdjust()
+    await userEvent.click(within(adjust).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(buttonOf(D1_SUMMARY, 'Waive / adjust')).toHaveFocus()
+
+    const uphold = await openUphold()
+    await userEvent.click(within(uphold).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(writes(fetch)).toHaveLength(0)
+  })
+
+  it('Uphold fine posts the note, toasts, and the card leaves after the refetch', async () => {
+    let current = queue([D1, D2])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/disputes/d1/uphold': () => {
+        current = queue([D2])
+        return json(200, { id: 'd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+    expect(chip('Fine disputes (2)')).toBeInTheDocument()
+
+    const dialog = await openUphold()
+    expect(dialog).toHaveTextContent(UPHOLD_BODY)
+    const note = noteOf(dialog)
+    expect(note).toHaveAttribute('maxlength', '300')
+    expect(note).toHaveFocus()
+    expect(confirmOf(dialog, 'Uphold fine')).toBeEnabled() // the note is optional
+    expect(writes(fetch)).toHaveLength(0)
+
+    await userEvent.type(note, '  The receipt is for a different book  ')
+    await userEvent.click(confirmOf(dialog, 'Uphold fine'))
+
+    expect(await screen.findByText('Fine upheld.')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+    // The dispute's id in the path (not the queue item's), the note trimmed.
+    expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/disputes\/d1\/uphold$/)
+    expect(JSON.parse(writes(fetch)[0][1]!.body as string)).toEqual({ note: 'The receipt is for a different book' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText(D1_SUMMARY)).toBeNull()
+    expect(screen.getByText(D2_SUMMARY)).toBeInTheDocument()
+    expect(chip('Fine disputes (1)')).toBeInTheDocument()
+    expect(chip('All (1)')).toBeInTheDocument()
+  })
+
+  it('a blank uphold note sends an empty body', async () => {
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([D1])),
+      'POST /admin/disputes/d1/uphold': () => json(200, { id: 'd1' }),
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+    const dialog = await openUphold()
+    await userEvent.type(noteOf(dialog), '   ')
+    await userEvent.click(confirmOf(dialog, 'Uphold fine'))
+    expect(await screen.findByText('Fine upheld.')).toBeInTheDocument()
+    expect(JSON.parse(writes(fetch)[0][1]!.body as string)).toEqual({})
+  })
+
+  it("a 409 on either shows the server's message, keeps the dialog and refetches", async () => {
+    // Uphold: someone else resolved the dispute meanwhile (409), or it is gone (404). The refetch drops the card; the
+    // dialog stays up with the note until the librarian cancels.
+    const upholds: [number, string][] = [
+      [409, 'This dispute was already resolved.'],
+      [404, 'Dispute not found'],
+    ]
+    for (const [status, message] of upholds) {
+      let current = queue([D1, D2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/disputes/d1/uphold': () => {
+          current = queue([D2])
+          return json(status, { error: message })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(D1_SUMMARY)
+      const dialog = await openUphold()
+      await userEvent.type(noteOf(dialog), 'The receipt is for a different book')
+      const confirm = confirmOf(dialog, 'Uphold fine')
+      await userEvent.click(confirm)
+
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(screen.queryByText('Fine upheld.')).toBeNull()
+      await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+      await waitFor(() => expect(screen.queryByText(D1_SUMMARY)).toBeNull())
+      expect(screen.getByRole('dialog', { name: 'Uphold this fine?' })).toBe(dialog)
+      expect(noteOf(dialog)).toHaveValue('The receipt is for a different book')
+      await waitFor(() => expect(confirm).toBeEnabled())
+      expect(confirm).toHaveFocus()
+      expect(writes(fetch)).toHaveLength(1)
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      view.unmount()
+    }
+
+    // Waive / adjust: the queue always names the dispute it read, so the server can only say that dispute was resolved
+    // meanwhile (409), or that the fine is gone (404). Either way the refetch drops the card, and the dialog keeps the typed
+    // amount and reason, and the student's words, until the librarian cancels: a closed dispute cannot be adjusted again.
+    const adjusts: [number, string][] = [
+      [409, 'This dispute was already resolved.'],
+      [404, 'Fine not found'],
+    ]
+    for (const [status, message] of adjusts) {
+      let current = queue([D1, D2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/fines/f1/adjust': () => {
+          current = queue([D2])
+          return json(status, { error: message })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(D1_SUMMARY)
+      const dialog = await openAdjust()
+      await fillAdjust(dialog, '100', 'Receipt shown')
+      const save = within(dialog).getByRole('button', { name: 'Save' })
+      await userEvent.click(save)
+
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(screen.queryByText('Fine adjusted.')).toBeNull()
+      await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+      await waitFor(() => expect(screen.queryByText(D1_SUMMARY)).toBeNull())
+      expect(screen.getByRole('dialog', { name: 'Waive or adjust this fine' })).toBe(dialog)
+      expect(within(dialog).getByLabelText('New amount (₹)')).toHaveValue(100)
+      expect(within(dialog).getByLabelText('Reason (required)')).toHaveValue('Receipt shown')
+      expect(within(dialog).getByText(WORDS)).toBeInTheDocument()
+      await waitFor(() => expect(save).toBeEnabled())
+      expect(save).toHaveFocus()
+      expect(writes(fetch)).toHaveLength(1)
+      expect(JSON.parse(writes(fetch)[0][1]!.body as string)).toEqual({ amount: 100, reason: 'Receipt shown', disputeId: 'd1' })
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      view.unmount()
+    }
+  })
+
+  it('a write that never reaches the server toasts the network message and keeps the dialog and its note', async () => {
+    let reachable = false
+    let current = queue([D1, D2])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/disputes/d1/uphold': () => {
+        if (!reachable) throw new TypeError('Failed to fetch')
+        current = queue([D2])
+        return json(200, { id: 'd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+    const dialog = await openUphold()
+    await userEvent.type(noteOf(dialog), 'The receipt is for a different book')
+    const confirm = confirmOf(dialog, 'Uphold fine')
+    await userEvent.click(confirm)
+
+    expect(await screen.findByText("Can't reach the SmartLib server. Try again in a minute.")).toBeInTheDocument()
+    expect(screen.queryByText('Fine upheld.')).toBeNull()
+    await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+    expect(screen.getByRole('dialog', { name: 'Uphold this fine?' })).toBe(dialog)
+    expect(noteOf(dialog)).toHaveValue('The receipt is for a different book')
+    await waitFor(() => expect(confirm).toBeEnabled())
+    expect(confirm).toHaveFocus()
+    expect(screen.getByText(D1_SUMMARY)).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+
+    // The request never arrived, so nothing was decided: once the network is back the same dialog sends it.
+    reachable = true
+    await userEvent.click(confirm)
+    expect(await screen.findByText('Fine upheld.')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(2)
+    expect(JSON.parse(writes(fetch)[1][1]!.body as string)).toEqual({ note: 'The receipt is for a different book' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('buttons on every card stay disabled until the list has refetched', async () => {
+    const refetching = gate()
+    let served = 0
+    let current = queue([CLEAN_CODE, D1, D2])
+    mockFetch({
+      'GET /admin/attention': async () => {
+        if (++served > 1) await refetching.promise
+        return json(200, current)
+      },
+      'POST /admin/disputes/d1/uphold': () => {
+        current = queue([CLEAN_CODE, D2])
+        return json(200, { id: 'd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+    const dialog = await openUphold()
+    await userEvent.click(confirmOf(dialog, 'Uphold fine'))
+
+    // The write landed and the list is not back yet: the dialog cannot be confirmed again, and every action on every
+    // card behind it, overdue or dispute, is off.
+    await screen.findByText('Fine upheld.')
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    expect(confirmOf(dialog, 'Uphold fine')).toBeDisabled()
+    const cards: [string, string[]][] = [
+      [CLEAN_CODE_SUMMARY, ['Send reminder', 'Escalate']],
+      [D1_SUMMARY, ['Waive / adjust', 'Uphold fine']],
+      [D2_SUMMARY, ['Waive / adjust', 'Uphold fine']],
+    ]
+    for (const [summary, names] of cards) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeDisabled()
+    }
+
+    refetching.open()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText(D1_SUMMARY)).toBeNull()
+    for (const [summary, names] of cards.filter(([summary]) => summary !== D1_SUMMARY)) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeEnabled()
+    }
+  })
+
+  it('a second click in flight sends nothing: Uphold fine is one write, and the other cards stay off', async () => {
+    const saving = gate()
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([CLEAN_CODE, D1, D2])),
+      'POST /admin/disputes/d1/uphold': async () => {
+        await saving.promise
+        return json(200, { id: 'd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const dialog = await openUphold()
+    await userEvent.dblClick(confirmOf(dialog, 'Uphold fine'))
+    expect(writes(fetch)).toHaveLength(1)
+    expect(confirmOf(dialog, 'Uphold fine')).toBeDisabled()
+
+    // Another card's buttons are off while it is in flight, so no second dialog opens and no second write is sent.
+    await userEvent.click(buttonOf(D2_SUMMARY, 'Waive / adjust'))
+    await userEvent.click(buttonOf(D2_SUMMARY, 'Uphold fine'))
+    await userEvent.click(buttonOf(CLEAN_CODE_SUMMARY, 'Send reminder'))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+
+    saving.open()
+    expect(await screen.findByText('Fine upheld.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(writes(fetch)).toHaveLength(1)
+  })
+
+  it('a second click in flight sends nothing: Save is one write, and stays off until the write has landed', async () => {
+    const saving = gate()
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([D1])),
+      'POST /admin/fines/f1/adjust': async () => {
+        await saving.promise
+        return json(200, { id: 'f1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(D1_SUMMARY)
+
+    const dialog = await openAdjust()
+    await fillAdjust(dialog, '100', 'Receipt shown')
+    const save = within(dialog).getByRole('button', { name: 'Save' })
+    await userEvent.dblClick(save)
+    expect(writes(fetch)).toHaveLength(1)
+    expect(save).toBeDisabled()
+    // The dialog is still up while the write is in flight.
+    expect(screen.getByRole('dialog')).toBe(dialog)
+
+    saving.open()
+    expect(await screen.findByText('Fine adjusted.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(writes(fetch)).toHaveLength(1)
+  })
+})
+
+describe('Needs attention problem reports', () => {
+  const NOTE = 'The cover is torn off and pages 40 to 52 are loose.'
+  const PROJECTOR = 'The projector shows no picture.'
+  // Oldest waiting first: R1 (3 days), R2 (2 days), R3 (1 day).
+  const R1 = copyReport('r1', ROHAN, 3, 'damaged', NOTE)
+  const R2 = copyReport('r2', MEERA, 2, 'missing_pages', 'Pages 10 to 20 are missing.', { id: 'c2', barcode: 'SL-000456', title: 'Sapiens' })
+  const R3 = resourceReport('r3', ADITI, 1, 'not_working', PROJECTOR)
+  const R1_SUMMARY = 'Copy SL-000123 of Clean Code, reported at return: Damaged'
+  const R2_SUMMARY = 'Copy SL-000456 of Sapiens, reported at return: Missing pages'
+  const R3_SUMMARY = 'Group Room 201 — Not working'
+  const CLEAN_CODE_SUMMARY = 'Clean Code — 3 days overdue'
+  const FLAG_BODY = `${R1_SUMMARY}. It will be removed from what students see as available. Confirming never charges the student.`
+  const OFFLINE_BODY = 'Group Room 201 will be hidden from the student booking calendar until brought back online.'
+
+  const openFlag = async (summary = R1_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Confirm & flag copy'))
+    return dialogOf('Flag this copy for maintenance?')
+  }
+  const openOffline = async (summary = R3_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Take offline'))
+    return dialogOf('Take this resource offline?')
+  }
+  const openDismiss = async (summary: string) => {
+    await userEvent.click(buttonOf(summary, 'Dismiss'))
+    return dialogOf('Dismiss this report?')
+  }
+  const reasonOf = (dialog: HTMLElement) => within(dialog).getByRole('combobox', { name: 'Reason' })
+  const noteOf = (dialog: HTMLElement) => within(dialog).getByLabelText('Note (optional)')
+  const bodyOf = (fetch: Fetch, index = 0) => JSON.parse(writes(fetch)[index][1]!.body as string)
+
+  it("a copy report card shows the tag, barcode, title, category and the student's note", async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([R1, R2, R3])) })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const card = inCard(R1_SUMMARY)
+    // The canvas's neutral tag, not the accent one the overdue and fine dispute cards carry.
+    expect(card.getByText('Maintenance flag')).toHaveClass('tag', 'tag-neutral')
+    expect(card.getByText('Maintenance flag')).not.toHaveClass('tag-accent')
+    expect(card.queryByText('Fine dispute')).toBeNull()
+    expect(card.queryByText('Overdue follow-up')).toBeNull()
+    expect(card.getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/s2?from=attention')
+    expect(card.getByText('waiting 3 days')).toBeInTheDocument()
+    expect(card.getByText(NOTE)).toHaveAttribute('title', NOTE)
+    expect(card.getByRole('button', { name: 'Confirm & flag copy' })).toBeEnabled()
+    expect(card.getByRole('button', { name: 'Dismiss' })).toBeEnabled()
+    // A copy has no Take offline, and none of the other cards' actions.
+    expect(card.queryByRole('button', { name: 'Take offline' })).toBeNull()
+    expect(card.queryByRole('button', { name: 'Send reminder' })).toBeNull()
+    expect(card.queryByRole('button', { name: 'Waive / adjust' })).toBeNull()
+
+    // Missing pages is worded as two words, and the cards keep the order the server sent.
+    expect(screen.getByText(R2_SUMMARY)).toBeInTheDocument()
+    expect(screen.getAllByText('Maintenance flag')).toHaveLength(3)
+    const summaries = screen.getAllByText(/reported at return|Not working$/).map((el) => el.textContent)
+    expect(summaries).toEqual([R1_SUMMARY, R2_SUMMARY, R3_SUMMARY])
+  })
+
+  it('a resource report card reads "<resource> — <category>" with the note, and offers Take offline and Dismiss', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([R3])) })
+    renderPage()
+    await screen.findByText(R3_SUMMARY)
+
+    const card = inCard(R3_SUMMARY)
+    expect(card.getByText('Maintenance flag')).toHaveClass('tag', 'tag-neutral')
+    expect(card.getByRole('link', { name: 'Aditi Sharma' })).toHaveAttribute('href', '/students/s1?from=attention')
+    expect(card.getByText('waiting 1 day')).toBeInTheDocument()
+    expect(card.getByText(PROJECTOR)).toHaveAttribute('title', PROJECTOR)
+    expect(card.getByRole('button', { name: 'Take offline' })).toBeEnabled()
+    expect(card.getByRole('button', { name: 'Dismiss' })).toBeEnabled()
+    expect(card.queryByRole('button', { name: 'Confirm & flag copy' })).toBeNull()
+  })
+
+  it('words every category as the card does, and shows one this console does not know as the server named it, capitalized', async () => {
+    const seat = (id: string, category: string, name: string) => resourceReport(id, ADITI, 5, category, null, { id: `res-${id}`, name })
+    mockFetch({
+      'GET /admin/attention': () =>
+        json(200, queue([
+          seat('a', 'not_working', 'Seat 1'), seat('b', 'dirty', 'Seat 2'), seat('c', 'other', 'Seat 3'),
+          seat('d', 'wrong_spot', 'Seat 4'), seat('e', 'constructor', 'Seat 5'),
+          copyReport('f', ROHAN, 5, 'other', null, { id: 'c9', barcode: 'SL-000999', title: 'Algorithms' }),
+        ])),
+    })
+    renderPage()
+    await screen.findByText('Seat 1 — Not working')
+    for (const summary of [
+      'Seat 2 — Dirty', 'Seat 3 — Other', 'Seat 4 — Wrong_spot', 'Seat 5 — Constructor',
+      'Copy SL-000999 of Algorithms, reported at return: Other',
+    ]) {
+      expect(screen.getByText(summary)).toBeInTheDocument()
+    }
+    // A report without a note has no detail line, and still has its actions.
+    expect(inCard('Seat 1 — Not working').getByRole('button', { name: 'Dismiss' })).toBeEnabled()
+  })
+
+  it("shows the student's note as text, never markup, and clamps a long note with the whole text in the tooltip", async () => {
+    const markup = '<img src=x onerror="alert(1)"> <b>please</b> take it out'
+    const long = `${'The pages are loose. '.repeat(15)}End.`.slice(0, 300)
+    const tricky = copyReport('r4', ROHAN, 2, 'damaged', markup, { id: 'c4', barcode: 'SL-000004', title: 'Networks' })
+    const wordy = resourceReport('r5', MEERA, 1, 'dirty', long, { id: 'res5', name: 'Study Pod 5' })
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([tricky, wordy])) })
+    const { container } = renderPage()
+    await screen.findByText('Copy SL-000004 of Networks, reported at return: Damaged')
+
+    expect(within(cardOf('Copy SL-000004 of Networks, reported at return: Damaged')).getByText(markup)).toBeInTheDocument()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('b')).toBeNull()
+
+    const clamped = within(cardOf('Study Pod 5 — Dirty')).getByText(long)
+    expect(clamped).toHaveAttribute('title', long)
+    expect(clamped.style.getPropertyValue('-webkit-line-clamp')).toBe('2')
+  })
+
+  it("the Flag and Dismiss dialogs show the student's note in full, as text, and say nothing when there is none", async () => {
+    // The card cuts a long note at two lines, so the dialogs a librarian decides in repeat it.
+    const markup = '<img src=x onerror="alert(1)"> <b>please</b> take it out'
+    const long = `${'The pages are loose. '.repeat(15)}End.`.slice(0, 300)
+    const wordy = copyReport('r4', ROHAN, 2, 'damaged', long, { id: 'c4', barcode: 'SL-000004', title: 'Networks' })
+    const tricky = resourceReport('r5', MEERA, 1, 'dirty', markup, { id: 'res5', name: 'Study Pod 5' })
+    const quiet = resourceReport('r8', ADITI, 1, 'other', null, { id: 'res8', name: 'Study Pod 8' })
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([wordy, tricky, quiet])) })
+    renderPage()
+    const wordySummary = 'Copy SL-000004 of Networks, reported at return: Damaged'
+    await screen.findByText(wordySummary)
+
+    const flag = await openFlag(wordySummary)
+    expect(within(flag).getByText(long)).toBeInTheDocument()
+    expect(within(flag).getByText("The student's note")).toBeInTheDocument()
+    await userEvent.click(within(flag).getByRole('button', { name: 'Cancel' }))
+
+    const dismissCopy = await openDismiss(wordySummary)
+    expect(within(dismissCopy).getByText(long)).toBeInTheDocument()
+    await userEvent.click(within(dismissCopy).getByRole('button', { name: 'Cancel' }))
+
+    const dismissResource = await openDismiss('Study Pod 5 — Dirty')
+    expect(within(dismissResource).getByText(markup)).toBeInTheDocument()
+    expect(dismissResource.querySelector('img')).toBeNull()
+    expect(dismissResource.querySelector('b')).toBeNull()
+    expect(within(dismissResource).queryByText(long)).toBeNull()
+    await userEvent.click(within(dismissResource).getByRole('button', { name: 'Cancel' }))
+
+    // A report without a note has no empty block.
+    const dismissQuiet = await openDismiss('Study Pod 8 — Other')
+    expect(within(dismissQuiet).queryByText("The student's note")).toBeNull()
+  })
+
+  it('the Maintenance flags chip counts them and shows only them, and ?type=report selects it', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([R1, CLEAN_CODE, R2, SAPIENS, R3])) })
+    const { unmount } = renderPage()
+    await screen.findByText(R1_SUMMARY)
+    expect(chip('All (5)')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('Overdue follow-ups (2)')).toBeInTheDocument()
+    expect(chip('Fine disputes (0)')).toBeInTheDocument()
+    expect(chip('Maintenance flags (3)')).toHaveAttribute('aria-pressed', 'false')
+
+    await userEvent.click(chip('Maintenance flags (3)'))
+    expect(chip('Maintenance flags (3)')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('Maintenance flag')).toHaveLength(3)
+    expect(screen.queryByText(CLEAN_CODE_SUMMARY)).toBeNull()
+    expect(screen.queryByText('Sapiens — 1 day overdue')).toBeNull()
+
+    // The other chip hides them again.
+    await userEvent.click(chip('Overdue follow-ups (2)'))
+    expect(screen.queryByText(R1_SUMMARY)).toBeNull()
+    expect(screen.queryByText(R3_SUMMARY)).toBeNull()
+    expect(screen.getByText(CLEAN_CODE_SUMMARY)).toBeInTheDocument()
+
+    unmount()
+    nav.search = 'type=report'
+    renderPage()
+    expect(await screen.findByRole('button', { name: 'Maintenance flags (3)' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(R2_SUMMARY)).toBeInTheDocument()
+    expect(screen.queryByText(CLEAN_CODE_SUMMARY)).toBeNull()
+  })
+
+  it('another chip with no cards says so while the Maintenance flags chip keeps its count', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([R1])) })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+    await userEvent.click(chip('Overdue follow-ups (0)'))
+    expect(screen.getByText('No overdue follow-ups waiting')).toBeInTheDocument()
+    expect(chip('Maintenance flags (1)')).toBeInTheDocument()
+    expect(chip('All (1)')).toBeInTheDocument()
+  })
+
+  it('Confirm & flag copy opens the dialog: the Reason select, an optional note, and the words that it never charges', async () => {
+    const fetch = mockFetch({ 'GET /admin/attention': () => json(200, queue([R1, R3])) })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const dialog = await openFlag()
+    expect(within(dialog).getByText(FLAG_BODY)).toBeInTheDocument()
+    const reason = reasonOf(dialog)
+    expect(reason).toHaveFocus()
+    expect(within(reason).getAllByRole('option').map((o) => o.textContent)).toEqual(['Damaged', 'Missing pages', 'Lost'])
+    expect(noteOf(dialog)).toHaveAttribute('maxlength', '300')
+    expect(confirmOf(dialog, 'Confirm & flag copy')).toBeEnabled() // the note is optional
+    expect(writes(fetch)).toHaveLength(0)
+
+    // Cancel sends nothing and gives focus back to the button that opened it.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(buttonOf(R1_SUMMARY, 'Confirm & flag copy')).toHaveFocus()
+    expect(writes(fetch)).toHaveLength(0)
+  })
+
+  it("starts the reason at the student's category (damaged and other mean Damaged, missing pages means Missing pages) and never at Lost", async () => {
+    const other = copyReport('r6', ROHAN, 2, 'other', 'See the note.', { id: 'c6', barcode: 'SL-000006', title: 'Compilers' })
+    const odd = copyReport('r7', MEERA, 1, 'torn_spine', null, { id: 'c7', barcode: 'SL-000007', title: 'Databases' })
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([R1, R2, other, odd])) })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const cases: [string, string][] = [
+      [R1_SUMMARY, 'Damaged'],
+      [R2_SUMMARY, 'Missing pages'],
+      ['Copy SL-000006 of Compilers, reported at return: Other', 'Damaged'],
+      ['Copy SL-000007 of Databases, reported at return: Torn_spine', 'Damaged'],
+    ]
+    for (const [summary, shown] of cases) {
+      const dialog = await openFlag(summary)
+      expect(reasonOf(dialog)).toHaveDisplayValue(shown)
+      expect(reasonOf(dialog)).not.toHaveDisplayValue('Lost')
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    }
+  })
+
+  it('Confirm & flag copy sends the chosen outcome (Damaged and Missing pages map to maintenance, Lost to lost) and the note', async () => {
+    const cases: [string, 'maintenance' | 'lost'][] = [
+      ['Damaged', 'maintenance'],
+      ['Missing pages', 'maintenance'],
+      ['Lost', 'lost'],
+    ]
+    for (const [reason, outcome] of cases) {
+      let current = queue([R1, R3])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/reports/r1/confirm': () => {
+          current = queue([R3])
+          return json(200, { id: 'r1' })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(R1_SUMMARY)
+      expect(chip('Maintenance flags (2)')).toBeInTheDocument()
+
+      const dialog = await openFlag()
+      await userEvent.selectOptions(reasonOf(dialog), reason)
+      await userEvent.type(noteOf(dialog), '  Cover torn off  ')
+      await userEvent.click(confirmOf(dialog, 'Confirm & flag copy'))
+
+      expect(await screen.findByText('Copy flagged.')).toBeInTheDocument()
+      expect(writes(fetch)).toHaveLength(1)
+      // The report's id in the path, the outcome and the trimmed note in the body.
+      expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/reports\/r1\/confirm$/)
+      expect(bodyOf(fetch)).toEqual({ outcome, note: 'Cover torn off' })
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await waitFor(() => expect(screen.queryByText(R1_SUMMARY)).toBeNull())
+      expect(screen.getByText(R3_SUMMARY)).toBeInTheDocument()
+      expect(chip('Maintenance flags (1)')).toBeInTheDocument()
+      view.unmount()
+    }
+  })
+
+  it('Confirm & flag copy with the reason as it starts sends maintenance, and a blank note sends no note at all', async () => {
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([R1])),
+      'POST /admin/reports/r1/confirm': () => json(200, { id: 'r1' }),
+    })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+    const dialog = await openFlag()
+    await userEvent.type(noteOf(dialog), '   ')
+    await userEvent.click(confirmOf(dialog, 'Confirm & flag copy'))
+    expect(await screen.findByText('Copy flagged.')).toBeInTheDocument()
+    expect(writes(fetch)[0][1]!.body).toBe('{"outcome":"maintenance"}')
+  })
+
+  it('a resource report offers Take offline with the note prefilled from the report, in the slice 4 dialog', async () => {
+    const fetch = mockFetch({ 'GET /admin/attention': () => json(200, queue([R3])) })
+    renderPage()
+    await screen.findByText(R3_SUMMARY)
+
+    const dialog = await openOffline()
+    // The slice 4 dialog's title, text and button; the queue does not know the upcoming bookings, so it does not say.
+    expect(within(dialog).getByText(OFFLINE_BODY)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/upcoming booking/)).toBeNull()
+    const note = noteOf(dialog)
+    expect(note).toHaveValue(PROJECTOR)
+    expect(note).toHaveAttribute('maxlength', '300')
+    expect(note).toHaveFocus()
+    expect(confirmOf(dialog, 'Take offline')).toBeEnabled()
+    expect(writes(fetch)).toHaveLength(0)
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(buttonOf(R3_SUMMARY, 'Take offline')).toHaveFocus()
+    expect(writes(fetch)).toHaveLength(0)
+  })
+
+  it("Take offline confirms the report with the note as it stands and no outcome (never the resource's own offline route)", async () => {
+    let current = queue([R1, R3])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/reports/r3/confirm': () => {
+        current = queue([R1])
+        return json(200, { id: 'r3' })
+      },
+    })
+    renderPage()
+    await screen.findByText(R3_SUMMARY)
+
+    const dialog = await openOffline()
+    await userEvent.type(noteOf(dialog), '  Bulb ordered.  ')
+    await userEvent.click(confirmOf(dialog, 'Take offline'))
+
+    expect(await screen.findByText('Resource taken offline.')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+    expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/reports\/r3\/confirm$/)
+    // No outcome: the server reads a report on a resource as "take it offline". The prefilled text and the typed text are one note.
+    expect(bodyOf(fetch)).toEqual({ note: `${PROJECTOR}  Bulb ordered.` })
+    expect('outcome' in bodyOf(fetch)).toBe(false)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(screen.queryByText(R3_SUMMARY)).toBeNull())
+    expect(screen.getByText(R1_SUMMARY)).toBeInTheDocument()
+    expect(chip('Maintenance flags (1)')).toBeInTheDocument()
+  })
+
+  it('Take offline sends the prefilled note untouched, and an absent or blank note sends an empty body', async () => {
+    const quiet = resourceReport('r8', MEERA, 1, 'dirty', null, { id: 'res8', name: 'Study Pod 8' })
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([R3, quiet])),
+      'POST /admin/reports/r3/confirm': () => json(200, { id: 'r3' }),
+      'POST /admin/reports/r8/confirm': () => json(200, { id: 'r8' }),
+    })
+    renderPage()
+    await screen.findByText(R3_SUMMARY)
+
+    // The student's own words go as they are.
+    const first = await openOffline()
+    await userEvent.click(confirmOf(first, 'Take offline'))
+    expect(await screen.findByText('Resource taken offline.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(bodyOf(fetch, 0)).toEqual({ note: PROJECTOR })
+
+    // A report with no note starts with an empty box, and a blank one sends nothing.
+    const second = await openOffline('Study Pod 8 — Dirty')
+    expect(noteOf(second)).toHaveValue('')
+    await userEvent.type(noteOf(second), '   ')
+    await userEvent.click(confirmOf(second, 'Take offline'))
+    await waitFor(() => expect(writes(fetch)).toHaveLength(2))
+    expect(writes(fetch)[1][1]!.body).toBe('{}')
+  })
+
+  it('Dismiss sends the note, for a copy report and for a resource report', async () => {
+    const reports: [string, string, string][] = [
+      [R1_SUMMARY, 'r1', 'The cover was already like that'],
+      [R3_SUMMARY, 'r3', 'The projector works now'],
+    ]
+    for (const [summary, id, text] of reports) {
+      let current = queue([R1, R3])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        [`POST /admin/reports/${id}/dismiss`]: () => {
+          current = queue([R1, R3].filter((r) => r.id !== id))
+          return json(200, { id })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(summary)
+
+      const dialog = await openDismiss(summary)
+      // The canvas's sentence, then what the student is told.
+      expect(
+        within(dialog).getByText(`${summary} will be cleared from the queue with no further action. The student is told no action was needed, with your note if you add one.`),
+      ).toBeInTheDocument()
+      const note = noteOf(dialog)
+      expect(note).toHaveAttribute('maxlength', '300')
+      expect(note).toHaveFocus()
+      expect(confirmOf(dialog, 'Dismiss')).toBeEnabled() // the note is optional
+      expect(writes(fetch)).toHaveLength(0)
+
+      await userEvent.type(note, `  ${text}  `)
+      await userEvent.click(confirmOf(dialog, 'Dismiss'))
+
+      expect(await screen.findByText('Report dismissed.')).toBeInTheDocument()
+      expect(writes(fetch)).toHaveLength(1)
+      expect(String(writes(fetch)[0][0])).toMatch(new RegExp(`/admin/reports/${id}/dismiss$`))
+      expect(bodyOf(fetch)).toEqual({ note: text })
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await waitFor(() => expect(screen.queryByText(summary)).toBeNull())
+      expect(chip('Maintenance flags (1)')).toBeInTheDocument()
+      view.unmount()
+    }
+  })
+
+  it('a blank dismiss note sends an empty body, and Cancel sends nothing', async () => {
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([R1])),
+      'POST /admin/reports/r1/dismiss': () => json(200, { id: 'r1' }),
+    })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const cancelled = await openDismiss(R1_SUMMARY)
+    await userEvent.click(within(cancelled).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(writes(fetch)).toHaveLength(0)
+
+    const dialog = await openDismiss(R1_SUMMARY)
+    await userEvent.type(noteOf(dialog), '   ')
+    await userEvent.click(confirmOf(dialog, 'Dismiss'))
+    expect(await screen.findByText('Report dismissed.')).toBeInTheDocument()
+    expect(writes(fetch)[0][1]!.body).toBe('{}')
+  })
+
+  it('a refusal ("This copy is now on loan.") keeps the dialog and what was chosen, toasts the message, and the card stays', async () => {
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([R1, R3])),
+      'POST /admin/reports/r1/confirm': () => json(409, { error: 'This copy is now on loan.' }),
+    })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const dialog = await openFlag()
+    await userEvent.selectOptions(reasonOf(dialog), 'Lost')
+    await userEvent.type(noteOf(dialog), 'Not on the shelf')
+    const confirm = confirmOf(dialog, 'Confirm & flag copy')
+    await userEvent.click(confirm)
+
+    expect(await screen.findByText('This copy is now on loan.')).toBeInTheDocument()
+    expect(screen.queryByText('Copy flagged.')).toBeNull()
+    await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+    expect(screen.getByRole('dialog', { name: 'Flag this copy for maintenance?' })).toBe(dialog)
+    expect(reasonOf(dialog)).toHaveDisplayValue('Lost')
+    expect(noteOf(dialog)).toHaveValue('Not on the shelf')
+    await waitFor(() => expect(confirm).toBeEnabled())
+    expect(confirm).toHaveFocus()
+    // The report stays: the librarian can dismiss it, or handle the copy in the Catalogue.
+    expect(screen.getByText(R1_SUMMARY)).toBeInTheDocument()
+    expect(chip('Maintenance flags (2)')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByText(R1_SUMMARY)).toBeInTheDocument()
+  })
+
+  it('keeps the Take offline and Dismiss dialogs, with their notes, when the report was resolved or removed meanwhile', async () => {
+    // A report's write is refused only with 409 "This report was already resolved." or 404 (a resource that is already offline
+    // just closes the report). Either way the report is gone from the refetched queue, so there is nothing to send again: the
+    // dialog keeps the note until the librarian cancels.
+    let current = queue([R1, R3])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/reports/r3/confirm': () => {
+        current = queue([R1])
+        return json(409, { error: 'This report was already resolved.' })
+      },
+      'POST /admin/reports/r1/dismiss': () => {
+        current = queue([])
+        return json(404, { error: 'Report not found' })
+      },
+    })
+    renderPage()
+    await screen.findByText(R3_SUMMARY)
+
+    // Take offline: someone else resolved it. The refetch drops the card, the dialog keeps the note and Cancel is the way out.
+    const offline = await openOffline()
+    await userEvent.type(noteOf(offline), ' Bulb ordered.')
+    const take = confirmOf(offline, 'Take offline')
+    await userEvent.click(take)
+    expect(await screen.findByText('This report was already resolved.')).toBeInTheDocument()
+    expect(screen.queryByText('Resource taken offline.')).toBeNull()
+    await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+    await waitFor(() => expect(screen.queryByText(R3_SUMMARY)).toBeNull())
+    expect(screen.getByRole('dialog', { name: 'Take this resource offline?' })).toBe(offline)
+    expect(noteOf(offline)).toHaveValue(`${PROJECTOR} Bulb ordered.`)
+    await waitFor(() => expect(take).toBeEnabled())
+    expect(take).toHaveFocus()
+    expect(writes(fetch)).toHaveLength(1)
+    expect(bodyOf(fetch)).toEqual({ note: `${PROJECTOR} Bulb ordered.` })
+    await userEvent.click(within(offline).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // Dismiss: the report is gone. The refetch drops the card, and the dialog stays with the note until it is cancelled.
+    const dismiss = await openDismiss(R1_SUMMARY)
+    await userEvent.type(noteOf(dismiss), 'Looked fine')
+    const confirm = confirmOf(dismiss, 'Dismiss')
+    await userEvent.click(confirm)
+    expect(await screen.findByText('Report not found')).toBeInTheDocument()
+    expect(screen.queryByText('Report dismissed.')).toBeNull()
+    await waitFor(() => expect(reads(fetch)).toHaveLength(3))
+    expect(await screen.findByText("You're all caught up")).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Dismiss this report?' })).toBe(dismiss)
+    expect(noteOf(dismiss)).toHaveValue('Looked fine')
+    await waitFor(() => expect(confirm).toBeEnabled())
+    expect(confirm).toHaveFocus()
+    await userEvent.click(within(dismiss).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('buttons on every card stay disabled until the list has refetched', async () => {
+    const refetching = gate()
+    let served = 0
+    let current = queue([CLEAN_CODE, R1, R3])
+    mockFetch({
+      'GET /admin/attention': async () => {
+        if (++served > 1) await refetching.promise
+        return json(200, current)
+      },
+      'POST /admin/reports/r1/dismiss': () => {
+        current = queue([CLEAN_CODE, R3])
+        return json(200, { id: 'r1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+    const dialog = await openDismiss(R1_SUMMARY)
+    await userEvent.click(confirmOf(dialog, 'Dismiss'))
+
+    // The write landed and the list is not back yet: the dialog cannot be confirmed again, and every action on every card
+    // behind it, overdue or report, is off.
+    await screen.findByText('Report dismissed.')
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    expect(confirmOf(dialog, 'Dismiss')).toBeDisabled()
+    const cards: [string, string[]][] = [
+      [CLEAN_CODE_SUMMARY, ['Send reminder', 'Escalate']],
+      [R1_SUMMARY, ['Confirm & flag copy', 'Dismiss']],
+      [R3_SUMMARY, ['Take offline', 'Dismiss']],
+    ]
+    for (const [summary, names] of cards) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeDisabled()
+    }
+
+    refetching.open()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText(R1_SUMMARY)).toBeNull()
+    for (const [summary, names] of cards.filter(([summary]) => summary !== R1_SUMMARY)) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeEnabled()
+    }
+  })
+
+  it('a second click in flight sends nothing: Confirm & flag copy is one write, and the other cards stay off', async () => {
+    const saving = gate()
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, queue([R1, R3])),
+      'POST /admin/reports/r1/confirm': async () => {
+        await saving.promise
+        return json(200, { id: 'r1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(R1_SUMMARY)
+
+    const dialog = await openFlag()
+    await userEvent.dblClick(confirmOf(dialog, 'Confirm & flag copy'))
+    expect(writes(fetch)).toHaveLength(1)
+    expect(confirmOf(dialog, 'Confirm & flag copy')).toBeDisabled()
+
+    // Another card's buttons are off while it is in flight, so no second dialog opens and no second write is sent.
+    await userEvent.click(buttonOf(R3_SUMMARY, 'Take offline'))
+    await userEvent.click(buttonOf(R3_SUMMARY, 'Dismiss'))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+
+    saving.open()
+    expect(await screen.findByText('Copy flagged.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(writes(fetch)).toHaveLength(1)
   })

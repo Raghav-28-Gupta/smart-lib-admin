@@ -21,6 +21,13 @@ describe('fines API', () => {
     expect(FINES_PAGE_SIZE).toBe(25)
   })
 
+  it('asks for the disputed fines with status=disputed', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'GET /admin/fines': () => json(200, EMPTY) })
+    await fetchFines({ search: '', status: 'disputed', page: 1 })
+    expect(urlOf(fetch).searchParams.get('status')).toBe('disputed')
+  })
+
   it('omits a blank search and the status "all"', async () => {
     writeToken('t')
     const fetch = mockFetch({ 'GET /admin/fines': () => json(200, EMPTY) })
@@ -73,6 +80,24 @@ describe('fine writes', () => {
     expect(fetch.mock.calls[0][1]!.body).toBe('{"amount":50,"reason":"Student showed the receipt"}')
   })
 
+  it('names the dispute it resolves: disputeId goes in the body after the trimmed reason', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/fines/f1/adjust': () => json(200, {}) })
+    await adjustFine('f1', 50, ' Receipt shown ', 'd1')
+    expect(fetch.mock.calls[0][1]!.body).toBe('{"amount":50,"reason":"Receipt shown","disputeId":"d1"}')
+    await adjustFine('f1', 0, 'Waived', 'd2')
+    expect(fetch.mock.calls[1][1]!.body).toBe('{"amount":0,"reason":"Waived","disputeId":"d2"}')
+  })
+
+  it('sends no disputeId when none is named: omitted, undefined or null', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/fines/f1/adjust': () => json(200, {}) })
+    await adjustFine('f1', 50, 'x')
+    await adjustFine('f1', 50, 'x', undefined)
+    await adjustFine('f1', 50, 'x', null)
+    for (const call of fetch.mock.calls) expect(call[1]!.body).toBe('{"amount":50,"reason":"x"}')
+  })
+
   it('sends amount 0 as 0 to waive', async () => {
     writeToken('t')
     const fetch = mockFetch({ 'POST /admin/fines/f1/adjust': () => json(200, {}) })
@@ -92,6 +117,21 @@ describe('fine writes', () => {
     expect(String(fetch.mock.calls[1][0])).toMatch(/\/admin\/fines\/a%2Fb\/adjust$/)
   })
 
+  it("passes the server's dispute refusals through", async () => {
+    writeToken('t')
+    mockFetch({
+      'POST /admin/fines/f1/adjust': () => json(409, { error: 'This fine was just disputed. Read the dispute before changing the fine.' }),
+      'POST /admin/fines/f2/adjust': () => json(409, { error: 'This dispute was already resolved.' }),
+      'POST /admin/fines/f3/paid': () => json(409, { error: 'This fine is being disputed. Resolve the dispute first.' }),
+    })
+    const refusal = (p: Promise<unknown>) => p.catch((e: unknown) => e)
+    expect(await refusal(adjustFine('f1', 50, 'x'))).toMatchObject({
+      status: 409, message: 'This fine was just disputed. Read the dispute before changing the fine.',
+    })
+    expect(await refusal(adjustFine('f2', 50, 'x', 'd9'))).toMatchObject({ status: 409, message: 'This dispute was already resolved.' })
+    expect(await refusal(markFinePaid('f3', 50))).toMatchObject({ status: 409, message: 'This fine is being disputed. Resolve the dispute first.' })
+  })
+
   it("passes the server's refusal through", async () => {
     writeToken('t')
     mockFetch({ 'POST /admin/fines/f1/paid': () => json(409, { error: 'This fine is already paid.' }) })
@@ -103,8 +143,8 @@ describe('fine writes', () => {
 })
 
 describe('FINE_STATUS_FILTERS', () => {
-  it('offers All statuses, Accruing, Outstanding, Adjusted, Paid and Waived, and no Disputed', () => {
-    expect(FINE_STATUS_FILTERS.map((f) => f.label)).toEqual(['All statuses', 'Accruing', 'Outstanding', 'Adjusted', 'Paid', 'Waived'])
-    expect(FINE_STATUS_FILTERS.map((f) => f.value)).toEqual(['all', 'accruing', 'outstanding', 'adjusted', 'paid', 'waived'])
+  it('offers All statuses, Accruing, Outstanding, Disputed (after Outstanding), Adjusted, Paid and Waived', () => {
+    expect(FINE_STATUS_FILTERS.map((f) => f.label)).toEqual(['All statuses', 'Accruing', 'Outstanding', 'Disputed', 'Adjusted', 'Paid', 'Waived'])
+    expect(FINE_STATUS_FILTERS.map((f) => f.value)).toEqual(['all', 'accruing', 'outstanding', 'disputed', 'adjusted', 'paid', 'waived'])
   })
 })

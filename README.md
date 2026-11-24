@@ -3,8 +3,10 @@
 The librarian console for SmartLib: log in with an admin account, approve or
 decline the borrow and room requests students send, manage the study-space
 resources and the bookings on them, manage the catalogue's books and copies,
-settle fines, open any student's record, and see live utilisation, circulation,
-overdue and demand metrics. Everything updates live, without reloading. Built
+settle fines, work through the Needs attention queue (overdue loans, disputed
+fines, problem reports), open any student's record, and see live utilisation,
+circulation, overdue and demand metrics. Everything updates live, without
+reloading. Built
 with Next.js and the Organic design system; talks only to the SmartLib API
 (`../backend`).
 
@@ -86,23 +88,33 @@ at midnight with no event. Two filters narrow the list, and changing either goes
 back to page 1:
 
 - search, for a student's name or email (sent after a short pause in typing);
-- status: Accruing, Outstanding, Adjusted, Paid or Waived.
+- status: Accruing, Outstanding, Disputed, Adjusted, Paid or Waived.
 
 A fine that was ever lowered shows "₹50 (was ₹150)", and under its status the
 librarian's reason (with who recorded it, "the library" when no one, for an
-adjusted or waived one). A librarian can, on an outstanding or adjusted row:
+adjusted or waived one). A fine its student has disputed shows a **Disputed**
+tag in place of Outstanding or Adjusted, with the student's words under it
+(cut at two lines, all of it on hover). A librarian can, on an outstanding or
+adjusted row:
 
 - **Mark paid**, once the student has paid at the desk. The confirmation shows
   the amount, and it is sent with the request: if a colleague lowered the fine
   meanwhile the server refuses and a toast says so, rather than recording the
-  payment against the new amount;
+  payment against the new amount. A disputed row has no Mark paid: the server
+  takes no payment while a dispute is open;
 - **Waive / adjust**: a new amount in whole rupees below the current one (0
   waives it) and a required reason (up to 300 characters). The student sees the
-  reason as the library's note in the app.
+  reason as the library's note in the app. On a disputed row the request names
+  the dispute the row showed, so the server closes it with the adjustment
+  (waived at ₹0, otherwise adjusted) and tells the student. If the student
+  disputed the fine after the page loaded, the server refuses ("This fine was
+  just disputed. Read the dispute before changing the fine.") and the row
+  refetches showing the dispute.
 
 Accruing, paid and waived rows have no actions. If the fine was settled or
 changed first, a toast gives the server's reason and the list refreshes. A
-student's name opens their page.
+student's name opens their page. A dispute can also be settled from Needs
+attention, which can leave the fine as it is (Uphold fine).
 
 ## Catalogue
 
@@ -135,12 +147,13 @@ on a copy lost that way, with its replacement charge still owed, offers a ticked
 box to waive that charge (for a student who found the book and brought it back);
 the loan stays closed as lost and its overdue fine stands. If the charge was
 paid (or waived) a moment earlier the copy is restored and a toast says it was
-not waived.
+not waived. A waived charge the student had disputed closes that dispute as
+waived, and they are told.
 
 ## Student page
 
-A student's name on the Bookings, Fines and Requests pages, and a borrower's on a
-catalogue copy, opens `/students/<id>?from=<section>`. The top bar reads
+A student's name on the Bookings, Fines, Requests and Needs attention pages, and a
+borrower's on a catalogue copy, opens `/students/<id>?from=<section>`. The top bar reads
 "Fines / Aditi Sharma" and the sidebar keeps that section highlighted; opened
 directly, the page falls back to "Dashboard". It shows:
 
@@ -150,13 +163,75 @@ directly, the page falls back to "Dashboard". It shows:
 - the reliability card: the score ring, a line through the history, and the
   dated list with each change's reason (a manual one names the librarian);
 - loan, booking and fine history, newest first, up to 50 each, read-only (a fine
-  is settled on the Fines page, a booking managed on the Bookings page).
+  is settled on the Fines page, a booking managed on the Bookings page; a
+  disputed fine shows the Fines page's Disputed tag and the student's words).
 
 **Adjust reliability** moves the score by −10 to +10 (never 0) with a required
 reason of up to 300 characters. The student's reliability card in the app shows a
 drop as `Library adjustment: <reason>` (a rise shows as an on-time dot). It is
 refused with a toast when the score is already at 100 or 0. An id that is not a
 student (an admin account's included) shows "Student not found".
+
+## Needs attention
+
+The Needs attention page has its own sidebar entry, after Requests, with a badge
+counting everything waiting (hidden at 0). It lists only what needs a librarian,
+oldest wait first, one card each: a type tag, the student (a link to their page,
+which leads back here), "waiting 3 days", a summary, a detail line and two
+actions. Chips filter it: All, Overdue follow-ups, Fine disputes and Maintenance
+flags, each with its count. `/attention?type=overdue`, `fine_dispute` or `report`
+opens with a chip selected (the Dashboard's Overdue materials card links to
+`?type=overdue`); clicking a chip does not change the address. The console
+fetches the whole queue in one request (the API's `?kind=` filter is not used),
+so the chips and the badge always agree. There is no No-show chip: nothing
+records no-shows yet. An empty queue reads "You're all caught up".
+
+| Card | Shown when | Actions |
+|---|---|---|
+| Overdue follow-up | a loan is a whole day or more overdue; the detail line gives the fine so far (₹10 a day, as on the Fines page) and the last notice | **Send reminder**, **Escalate** |
+| Fine dispute | a student disputed an outstanding or adjusted fine (one dispute per fine, ever); the detail line is their reason, in full (never cut: the dispute is decided on it, and a fine is disputed once) | **Waive / adjust**, **Uphold fine** |
+| Maintenance flag | a student reported a copy when returning it, or a seat or room they booked, with a category and a note (the card cuts a long note at two lines, all of it on hover; the Confirm and Dismiss dialogs show it whole) | **Confirm & flag copy** (a copy) or **Take offline** (a seat or room), and **Dismiss** |
+
+- **Send reminder**: at most one a day for a loan (an escalation neither starts
+  nor blocks that clock).
+- **Escalate**: a formal notice, with an optional note, once per loan. The card
+  then carries an Escalated tag and loses the button; a reminder can still
+  follow. It changes no amount: the fine keeps growing until the book is back.
+- **Waive / adjust**: the Fines page's dialog (₹0 waives; a reason is required),
+  with the student's reason shown under its text (only here: the Fines page's own
+  dialog is unchanged), and its request names the dispute, so the server closes
+  the dispute with it.
+- **Uphold fine**: closes the dispute with the fine standing; optional note. The
+  dialog repeats the student's reason.
+- **Confirm & flag copy**: Damaged and Missing pages send the copy to
+  maintenance, Lost marks it lost (only a copy on the shelf); optional note.
+  Confirming never charges the student. A copy lent out again, or set aside for
+  a waitlisted student, is refused and the report stays open for Dismiss.
+- **Take offline**: the Resources page's dialog, its note started with the
+  student's words; one request takes the resource offline and closes the report.
+  A resource that is already offline just closes the report.
+- **Dismiss**: closes the report with no action ("<report> will be cleared from the
+  queue with no further action"); optional note.
+
+**What the student is told.** Every action on this page writes a notice on the
+student's My Loans (kept for 7 days, the 20 newest) and, when the library has set
+up email, sends the same text by email: "Overdue book reminder", "Formal overdue
+notice", "Your fine was waived", "Your fine was reduced", "Your fine stands",
+"Thanks for the report" (the library has taken it out of use) and "About your
+report" (no action was needed). A note you add (for a waive or adjustment, its
+required reason) follows the text as "Note from the library: …". The reminder
+dialog says which applies: "…gets a notice in the app and an email about <title>"
+or "…Email isn't set up." The overdue card's last-notice line ("Reminded 2 days
+ago · emailed") says "emailed" only when the email went out; "not emailed" covers
+email that is not set up, a demo account's placeholder address, an address
+outside the server's `MAIL_ALLOWED_DOMAINS` and a provider failure, and the
+notice in the app is there in every case. Email is set up on the backend
+(`../backend/README.md`), never here.
+
+Every write goes through the shared write action: one at a time, and when the
+server refuses ("A reminder was sent 3 hours ago.", "This dispute was already
+resolved.", "This copy is now on loan.") a toast gives its reason, the dialog
+keeps what was typed and the queue refetches. The buttons stay off until it has.
 
 ## Live updates
 
@@ -176,14 +251,20 @@ Each event names the topics it affects, and a view refetches on its own:
 - `resources`: the Resources page (one added, edited, taken offline or brought
   back);
 - `fines`: the Fines page and the student page (a fine marked paid, adjusted or
-  waived, or written when a late loan is returned or renewed);
+  waived, disputed, or written when a late loan is returned or renewed);
 - `catalogue`: the Catalogue page and the student page (a book or copy changed,
   a loan returned, a copy lost on loan);
-- `students`: the student page (a manual reliability adjustment).
+- `students`: the student page (a manual reliability adjustment);
+- `attention`: the Needs attention page and its sidebar badge
+  (`attention.changed`: a reminder or escalation sent, a dispute or problem
+  report filed or settled; a late return or renewal, or a copy lost on loan,
+  carries it too, since the overdue card leaves the queue).
 
 ## Design
 
 The specs and plans for each slice are in `docs/`. Every section of the sidebar
 is built: Bookings and Resources (slice 4), then Fines, Catalogue and the student
-page (slice 5). The librarian's "Needs attention" queue, with student disputes, is
-the next slice and has no sidebar entry yet.
+page (slice 5), then Needs attention with fine disputes and problem reports
+(slice 6, `docs/2026-11-22-needs-attention-design.md`). The one part of the design
+canvas not built is no-show handling (no-show disputes and the No-show chip),
+which waits for no-show detection.

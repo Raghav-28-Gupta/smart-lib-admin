@@ -32,11 +32,19 @@ npm run build      # production build, includes type-checking
   them with `useRequests()` instead of fetching them again.
 - The Needs attention queue lives in `AttentionProvider` (`lib/attentionContext.tsx`), mounted next to it in the console
   layout: read it with `useAttention()`; the sidebar badge is `attentionCount(state)` (`counts.all`). `AttentionItem`
-  (`lib/attention.ts`) is a union on `kind`; the page filters its chips client-side and reads `?type=` inside `<Suspense>`.
+  (`lib/attention.ts`) is a union on `kind` (`overdue`, `fine_dispute`, `report`); the page filters its chips client-side
+  (the console never sends the API's `?kind=`) and reads `?type=` (the page's name for the same word) inside `<Suspense>`.
+  The overdue card's line ("Reminded 2 days ago · emailed") is `noticeLine`: a notice's `emailStatus` `sent` reads
+  "emailed", `failed` and `skipped` both read "not emailed", and one under a minute old reads "just now".
+  `useAttentionActions(refresh)` (`components/attention/`) returns `remind`, `escalate`, `uphold`, `adjust`, `confirmCopy`,
+  `takeResourceOffline` and `dismiss`; `fineFromDispute(item)` builds the `AdminFine` the reused `AdjustFineDialog` needs.
+  A resource report's "Take offline" is `confirmReport(id, { note })` with no `outcome`: the server takes the resource
+  offline and closes the report in that one request (it is not the Resources page's offline route).
 - Live topics (`LiveTopic` in `lib/live.ts`) are `requests`, `metrics`,
   `bookings`, `resources`, `fines`, `catalogue`, `students` and `attention`. Each page
   refetches on its own: Requests (and the sidebar count) on `requests`, Needs attention
-  (and its sidebar count) on `attention` (`attention.changed`), the
+  (and its sidebar count) on `attention` (`attention.changed`; a past-due `loan.changed` and a
+  lost-on-loan `catalogue.changed` carry the topic too), the
   Dashboard on `metrics`, Bookings on `bookings` (`booking.changed`), Resources on
   `resources` (`resource.changed`), Fines on `fines` (`fine.changed`, and
   `loan.changed` for a past-due return), Catalogue on `catalogue`
@@ -60,7 +68,18 @@ npm run build      # production build, includes type-checking
   ignored as a second call; callers that do not care just `void` it. A dialog with
   typed values (the Catalogue's book, copies, lost-on-loan and restore dialogs, the student page's adjust dialog)
   stays open until `run` resolves `true`, so a refusal does not throw the form away (`components/useDialogSubmit.ts`).
-  The Fines page's two dialogs close as soon as they are confirmed (their row buttons stay off through `busy`).
+  The Fines page's two dialogs close as soon as they are confirmed (their row buttons stay off through `busy`): a refused
+  adjust or Mark paid is read from the toast and the refetched row, because the dialog only holds the row as it was.
+  `AdjustFineDialog`'s `onConfirm` may instead return `Promise<boolean>` (the Needs attention dispute card does): the dialog
+  then stays open with what was typed until it resolves `true`, and Save is off while the write is in flight. So may
+  `OfflineDialog`'s (the Needs attention "Take offline" does; the Resources page's still closes on confirm), which has
+  three optional props for that page: `initialNote` (the note box starts with the student's words), `resource.upcomingBookings`
+  (without it the "n upcoming bookings stay" sentence is left out) and the promise-returning `onConfirm`.
+  The Needs attention dialogs (`RemindDialog`, `EscalateDialog`, `UpholdDialog`, `ConfirmCopyReportDialog`, `DismissDialog` and
+  those two) all use `useDialogSubmit`: the page holds the item as it was opened and closes a dialog only once its write
+  resolves `true` (`closeWhenSent`), so a refusal that refetches the card away still keeps the dialog and its text.
+  A fine with an open dispute carries `dispute` (`AdminFine`): its row shows the Disputed tag and the student's reason, hides
+  Mark paid, and `adjustFine(id, amount, reason, disputeId)` names that dispute so the server closes it with the adjustment.
   `success` may be a function of the action's result when the toast depends on the
   server's answer (Restore says whether the replacement charge was waived).
 - A list page that fetches its own data uses `useLoader(fetcher)`

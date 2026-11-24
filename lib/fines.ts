@@ -1,10 +1,20 @@
 import { apiRequest } from './api'
 
 /**
- * `accruing` is computed, not stored: a loan past its due date that has not been returned yet.
- * The others are fines the library has recorded.
+ * `accruing` is computed, not stored: a loan past its due date that has not been returned yet. `disputed` is
+ * derived too: a fine with an open dispute is listed as disputed, not as the outstanding or adjusted fine it
+ * still is underneath. The others are fines the library has recorded.
  */
-export type FineStatus = 'accruing' | 'outstanding' | 'adjusted' | 'paid' | 'waived'
+export type FineStatus = 'accruing' | 'outstanding' | 'disputed' | 'adjusted' | 'paid' | 'waived'
+
+/** A student's open dispute of a fine (the Needs attention design, section 6.2). */
+export interface FineDispute {
+  id: string
+  /** The student's own words, at most 300 characters. */
+  reason: string
+  /** ISO timestamp (UTC). */
+  createdAt: string
+}
 
 // GET /admin/fines (backend: src/services/adminFineService.ts).
 export interface AdminFine {
@@ -28,6 +38,8 @@ export interface AdminFine {
   recordedBy: string | null
   /** True while the librarian can still mark it paid or adjust it. */
   canSettle: boolean
+  /** The open dispute, or null when there is none. While it is open the fine cannot be marked paid, and adjusting it must name this id. */
+  dispute: FineDispute | null
 }
 
 export interface FinesPage {
@@ -39,11 +51,12 @@ export interface FinesPage {
 
 export const FINES_PAGE_SIZE = 25
 
-/** The status select's options, in the spec's order. The canvas's Disputed option is left out, as the spec says. */
+/** The status select's options, in the canvas's order: Disputed sits right after Outstanding. */
 export const FINE_STATUS_FILTERS: { value: FineStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All statuses' },
   { value: 'accruing', label: 'Accruing' },
   { value: 'outstanding', label: 'Outstanding' },
+  { value: 'disputed', label: 'Disputed' },
   { value: 'adjusted', label: 'Adjusted' },
   { value: 'paid', label: 'Paid' },
   { value: 'waived', label: 'Waived' },
@@ -75,7 +88,10 @@ export function markFinePaid(id: string, amount: number): Promise<unknown> {
 /**
  * Lowers a fine to `amount` whole rupees, strictly below what it is now; 0 waives it. The reason is
  * required and shown on the student's fine history: it goes trimmed. The server answers the updated row.
+ * `disputeId` is the id of the open dispute the librarian saw with the fine (null or left out when the fine showed
+ * none): the server then closes that dispute too, and refuses (409) a dispute that opened or closed meanwhile.
  */
-export function adjustFine(id: string, amount: number, reason: string): Promise<unknown> {
-  return apiRequest<unknown>(finePath(id, 'adjust'), { method: 'POST', body: { amount, reason: reason.trim() } })
+export function adjustFine(id: string, amount: number, reason: string, disputeId?: string | null): Promise<unknown> {
+  const body = { amount, reason: reason.trim(), ...(disputeId ? { disputeId } : {}) }
+  return apiRequest<unknown>(finePath(id, 'adjust'), { method: 'POST', body })
 }
