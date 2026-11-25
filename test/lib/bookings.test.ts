@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, writeToken } from '@/lib/api'
 import {
-  BOOKINGS_PAGE_SIZE, bookingsRange, cancelBooking, fetchBookings, fetchReassignOptions, reassignBooking,
+  BOOKING_STATUS_FILTERS, BOOKINGS_PAGE_SIZE, bookingsRange, cancelBooking, fetchBookings, fetchReassignOptions, reassignBooking,
   type BookingsPage, type ReassignOption,
 } from '@/lib/bookings'
 import { json, mockFetch } from '../helpers'
@@ -29,6 +29,25 @@ describe('bookings API', () => {
     await fetchBookings({ search: '', status: 'checked_in', page: 1 })
     expect(new URL(String(fetch.mock.calls[0][0])).searchParams.has('status')).toBe(false)
     expect(new URL(String(fetch.mock.calls[1][0])).searchParams.get('status')).toBe('checked_in')
+  })
+
+  it('sends status=no_show for the No-show filter', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'GET /admin/bookings': () => json(200, EMPTY) })
+    await fetchBookings({ search: '', status: 'no_show', page: 1 })
+    expect(queryOf(fetch).get('status')).toBe('no_show')
+  })
+
+  it('offers the canvas statuses in its order, with No-show between Completed and Cancelled', () => {
+    expect(BOOKING_STATUS_FILTERS).toEqual([
+      { value: 'all', label: 'All statuses' },
+      { value: 'booked', label: 'Booked' },
+      { value: 'checked_in', label: 'Checked in' },
+      { value: 'completed', label: 'Completed' },
+      { value: 'no_show', label: 'No-show' },
+      { value: 'cancelled', label: 'Cancelled' },
+      { value: 'released', label: 'Released (grace period)' },
+    ])
   })
 
   it('sends the page asked for', async () => {

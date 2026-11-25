@@ -29,19 +29,37 @@ npm run build      # production build, includes type-checking
 - Live updates come from `lib/liveContext.tsx`: refetch with
   `useLiveRefresh(topics, refetch)` or react with `useLiveMessages`. Never poll.
 - Pending requests live in `RequestsProvider` (`lib/requestsContext.tsx`); read
-  them with `useRequests()` instead of fetching them again.
+  them with `useRequests()` instead of fetching them again. It also holds the list's
+  order (`order`, `setOrder`: `'suggested'`, the server's default and what a plain
+  `GET /admin/requests` returns, or `'request'` for the Requests page's "By request
+  time" toggle, which sends `?order=request`); an order change refetches quietly, the
+  counts never depend on it, and the page puts it back to `'suggested'` when it
+  unmounts. A scored room request carries `room.priority`
+  (`{ suggestedDelayMinutes, riskPercent }`); `suggestedOrderNote(r)`
+  (`components/requests/requestText.ts`) words it only when the delay is above zero,
+  and `RequestCard` takes a required `showOrderNote` that the page turns off under
+  `order === 'request'` (the note would contradict the list). The Dashboard's
+  `WaitingPanel` sorts a copy of the list by `requestedAt` itself before taking its
+  first three, because the provider's array is in the suggested order.
 - The Needs attention queue lives in `AttentionProvider` (`lib/attentionContext.tsx`), mounted next to it in the console
   layout: read it with `useAttention()`; the sidebar badge is `attentionCount(state)` (`counts.all`). `AttentionItem`
-  (`lib/attention.ts`) is a union on `kind` (`overdue`, `fine_dispute`, `report`); the page filters its chips client-side
+  (`lib/attention.ts`) is a union on `kind` (`overdue`, `fine_dispute`, `report`, `no_show_dispute`; `ATTENTION_KINDS` is the one
+  list of them, and the page leaves out an item of any other kind); `counts` has a required `no_show_dispute` too (an older
+  backend would not send it, so the page reads a missing count as 0: the backend deploys first). The page filters its chips client-side
   (the console never sends the API's `?kind=`) and reads `?type=` (the page's name for the same word) inside `<Suspense>`.
   The overdue card's line ("Reminded 2 days ago · emailed") is `noticeLine`: a notice's `emailStatus` `sent` reads
   "emailed", `failed` and `skipped` both read "not emailed", and one under a minute old reads "just now".
   `useAttentionActions(refresh)` (`components/attention/`) returns `remind`, `escalate`, `uphold`, `adjust`, `confirmCopy`,
-  `takeResourceOffline` and `dismiss`; `fineFromDispute(item)` builds the `AdminFine` the reused `AdjustFineDialog` needs.
+  `takeResourceOffline`, `dismiss`, `overturnNoShow` and `upholdNoShow`; `fineFromDispute(item)` builds the `AdminFine` the reused
+  `AdjustFineDialog` needs. A no-show dispute is answered through `POST /admin/no-show-disputes/:id/overturn` (a reason, required)
+  and `/uphold` (an optional note), both named by the dispute's `noShow.disputeId`; the student's words are shown through
+  `StudentWords` (`white-space: pre-line`, so the line breaks they typed survive, as in the fine dispute card).
   A resource report's "Take offline" is `confirmReport(id, { note })` with no `outcome`: the server takes the resource
   offline and closes the report in that one request (it is not the Resources page's offline route).
 - Live topics (`LiveTopic` in `lib/live.ts`) are `requests`, `metrics`,
-  `bookings`, `resources`, `fines`, `catalogue`, `students` and `attention`. Each page
+  `bookings`, `resources`, `fines`, `catalogue`, `students` and `attention`
+  (`LiveEventType` also lists `request.scored`, a room request the model just scored,
+  on `requests`). Each page
   refetches on its own: Requests (and the sidebar count) on `requests`, Needs attention
   (and its sidebar count) on `attention` (`attention.changed`; a past-due `loan.changed` and a
   lost-on-loan `catalogue.changed` carry the topic too), the
@@ -75,8 +93,8 @@ npm run build      # production build, includes type-checking
   `OfflineDialog`'s (the Needs attention "Take offline" does; the Resources page's still closes on confirm), which has
   three optional props for that page: `initialNote` (the note box starts with the student's words), `resource.upcomingBookings`
   (without it the "n upcoming bookings stay" sentence is left out) and the promise-returning `onConfirm`.
-  The Needs attention dialogs (`RemindDialog`, `EscalateDialog`, `UpholdDialog`, `ConfirmCopyReportDialog`, `DismissDialog` and
-  those two) all use `useDialogSubmit`: the page holds the item as it was opened and closes a dialog only once its write
+  The Needs attention dialogs (`RemindDialog`, `EscalateDialog`, `UpholdDialog`, `ConfirmCopyReportDialog`, `DismissDialog`,
+  `OverturnNoShowDialog`, `UpholdNoShowDialog` and those two) all use `useDialogSubmit`: the page holds the item as it was opened and closes a dialog only once its write
   resolves `true` (`closeWhenSent`), so a refusal that refetches the card away still keeps the dialog and its text.
   A fine with an open dispute carries `dispute` (`AdminFine`): its row shows the Disputed tag and the student's reason, hides
   Mark paid, and `adjustFine(id, amount, reason, disputeId)` names that dispute so the server closes it with the adjustment.

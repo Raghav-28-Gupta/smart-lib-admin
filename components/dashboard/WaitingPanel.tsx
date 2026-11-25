@@ -12,7 +12,10 @@ import { useNow } from '@/lib/useNow'
 
 const SHOWN = 3
 
-/** The Dashboard's "Waiting for approval" card: the oldest requests, decided in place. */
+/**
+ * The Dashboard's "Waiting for approval" card: the oldest requests, decided in place. It orders them itself, because
+ * the server's default order is the suggested one (a scored room request can sit behind a younger one).
+ */
 export function WaitingPanel() {
   const { state, retry } = useRequests()
   const count = state.kind === 'loaded' ? state.data.counts.all : 0
@@ -36,13 +39,17 @@ export function WaitingPanel() {
           <span className="text-muted" style={{ fontSize: 12.5 }}>No requests waiting.</span>
         ) : (
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {state.data.requests.slice(0, SHOWN).map((r) => (
+            {oldestFirst(state.data.requests).slice(0, SHOWN).map((r) => (
               <WaitingRow key={`${r.kind}:${r.id}`} request={r} />
             ))}
           </ul>
         ))}
     </section>
   )
+}
+
+function oldestFirst(requests: PendingRequest[]): PendingRequest[] {
+  return [...requests].sort((a, b) => Date.parse(a.requestedAt) - Date.parse(b.requestedAt))
 }
 
 function WaitingRow({ request }: { request: PendingRequest }) {

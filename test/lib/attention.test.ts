@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, writeToken } from '@/lib/api'
 import {
-  confirmReport, disputeSummary, dismissReport, escalateLoan, fetchAttention, fineFromDispute, noticeLine, overdueDetail,
-  overdueSummary, remindLoan, reportCategoryLabel, reportSummary, upholdDispute, waitingText,
-  type AttentionQueue, type DisputeDetails, type FineDisputeItem, type LastNotice, type OverdueDetails, type ReportDetails,
+  ATTENTION_KINDS, confirmReport, disputeSummary, dismissReport, escalateLoan, fetchAttention, fineFromDispute, noShowBookingLine,
+  noShowSummary, noticeLine, overdueDetail, overdueSummary, overturnNoShowDispute, remindLoan, reportCategoryLabel, reportSummary,
+  upholdDispute, upholdNoShowDispute, waitingText,
+  type AttentionQueue, type DisputeDetails, type FineDisputeItem, type LastNotice, type NoShowDetails, type OverdueDetails,
+  type ReportDetails,
 } from '@/lib/attention'
 import { json, mockFetch } from '../helpers'
 
@@ -18,7 +20,7 @@ const QUEUE: AttentionQueue = {
       overdue: { loanId: 'loan-1', title: 'Clean Code', dueAt: daysAgoIso(3), daysOverdue: 3, amount: 30, lastNotice: null, escalated: false },
     },
   ],
-  counts: { all: 1, overdue: 1, fine_dispute: 0, report: 0 },
+  counts: { all: 1, overdue: 1, fine_dispute: 0, report: 0, no_show_dispute: 0 },
   emailEnabled: true,
 }
 
@@ -336,5 +338,108 @@ describe('problem report card text', () => {
   it('still reads when the server leaves out the target it names', () => {
     expect(reportSummary(report({ copy: undefined }))).toBe('A copy, reported at return: Damaged')
     expect(reportSummary(report({ target: 'resource', category: 'dirty', copy: undefined }))).toBe('A resource — Dirty')
+  })
+})
+
+describe('ATTENTION_KINDS', () => {
+  it('names every kind this console can draw, so a kind it does not know is left out of the list', () => {
+    expect([...ATTENTION_KINDS]).toEqual(['overdue', 'fine_dispute', 'report', 'no_show_dispute'])
+  })
+})
+
+describe('no-show dispute card text', () => {
+  const kolkataDay = (at: Date) =>
+    new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }).format(at)
+  // The library's clock is Asia/Kolkata (UTC+5:30): 08:30Z to 10:30Z is 2 to 4 PM there.
+  const afternoon = new Date(NOW - 2 * 86_400_000)
+  afternoon.setUTCHours(8, 30, 0, 0)
+  const noShow = (over: Partial<NoShowDetails> = {}): NoShowDetails => ({
+    disputeId: 'nd-1',
+    bookingId: 'b-1',
+    resource: { id: 'res-1', name: 'Discussion Pod 3' },
+    startTime: afternoon.toISOString(),
+    endTime: new Date(afternoon.getTime() + 2 * 3_600_000).toISOString(),
+    studentReason: 'I checked in at the desk but the app never registered it.',
+    ...over,
+  })
+
+  it('summarises as "Disputes no-show flag on <resource>"', () => {
+    expect(noShowSummary(noShow())).toBe('Disputes no-show flag on Discussion Pod 3')
+    expect(noShowSummary(noShow({ resource: { id: 'res-2', name: 'Seat 14' } }))).toBe('Disputes no-show flag on Seat 14')
+  })
+
+  it("words the booking as \"<day>, <start>–<end>\" in the library's time zone", () => {
+    expect(noShowBookingLine(noShow())).toBe(`${kolkataDay(afternoon)}, 2–4 PM`)
+  })
+
+  it('takes the day from the library clock, not UTC: a late-evening UTC slot is the next morning there', () => {
+    const lateUtc = new Date(NOW - 3 * 86_400_000)
+    lateUtc.setUTCHours(20, 0, 0, 0)
+    const line = noShowBookingLine(noShow({
+      startTime: lateUtc.toISOString(), endTime: new Date(lateUtc.getTime() + 2 * 3_600_000).toISOString(),
+    }))
+    expect(line).toBe(`${kolkataDay(lateUtc)}, 1:30–3:30 AM`)
+    expect(kolkataDay(lateUtc)).not.toBe(new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }).format(lateUtc))
+  })
+})
+
+describe('overturnNoShowDispute', () => {
+  it("POSTs to the dispute's overturn route with the token and the reason trimmed", async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/no-show-disputes/nd-1/overturn': () => json(200, { id: 'nd-1' }) })
+    await expect(overturnNoShowDispute('nd-1', '  The desk log shows the check-in \n')).resolves.toEqual({ id: 'nd-1' })
+    expect(fetch.mock.calls[0][1]!.body).toBe('{"reason":"The desk log shows the check-in"}')
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('escapes the dispute id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/no-show-disputes/a%2Fb/overturn': () => json(200, {}) })
+    await overturnNoShowDispute('a/b', 'Because')
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/no-show-disputes\/a%2Fb\/overturn$/)
+  })
+
+  it("passes the server's refusals through", async () => {
+    writeToken('t')
+    mockFetch({
+      'POST /admin/no-show-disputes/nd-1/overturn': () => json(409, { error: 'This dispute was already resolved.' }),
+      'POST /admin/no-show-disputes/nd-2/overturn': () => json(404, { error: 'No-show dispute not found' }),
+    })
+    const resolved = await overturnNoShowDispute('nd-1', 'Because').catch((e: unknown) => e)
+    expect(resolved).toBeInstanceOf(ApiError)
+    expect([(resolved as ApiError).status, (resolved as ApiError).message]).toEqual([409, 'This dispute was already resolved.'])
+    const missing = await overturnNoShowDispute('nd-2', 'Because').catch((e: unknown) => e)
+    expect([(missing as ApiError).status, (missing as ApiError).message]).toEqual([404, 'No-show dispute not found'])
+  })
+})
+
+describe('upholdNoShowDispute', () => {
+  it("POSTs to the dispute's uphold route with the token, the note trimmed, and {} when it is blank", async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/no-show-disputes/nd-1/uphold': () => json(200, { id: 'nd-1' }) })
+    await expect(upholdNoShowDispute('nd-1', '  The desk has no record of it \n')).resolves.toEqual({ id: 'nd-1' })
+    await upholdNoShowDispute('nd-1', '')
+    await upholdNoShowDispute('nd-1', '  \n ')
+    expect(fetch.mock.calls.map(([, init]) => init!.body)).toEqual(['{"note":"The desk has no record of it"}', '{}', '{}'])
+    expect(fetch.mock.calls[0][1]!.method).toBe('POST')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Authorization')).toBe('Bearer t')
+    expect(new Headers(fetch.mock.calls[0][1]!.headers).get('Content-Type')).toBe('application/json')
+  })
+
+  it('escapes the dispute id in the path', async () => {
+    writeToken('t')
+    const fetch = mockFetch({ 'POST /admin/no-show-disputes/a%2Fb/uphold': () => json(200, {}) })
+    await upholdNoShowDispute('a/b', '')
+    expect(String(fetch.mock.calls[0][0])).toMatch(/\/admin\/no-show-disputes\/a%2Fb\/uphold$/)
+  })
+
+  it("passes the server's refusal through", async () => {
+    writeToken('t')
+    mockFetch({ 'POST /admin/no-show-disputes/nd-1/uphold': () => json(409, { error: 'This dispute was already resolved.' }) })
+    const resolved = await upholdNoShowDispute('nd-1', '').catch((e: unknown) => e)
+    expect(resolved).toBeInstanceOf(ApiError)
+    expect([(resolved as ApiError).status, (resolved as ApiError).message]).toEqual([409, 'This dispute was already resolved.'])
   })
 })

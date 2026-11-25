@@ -25,7 +25,7 @@ const queue = (all: number): AttentionQueue => ({
       overdue: { loanId: 'loan-1', title: 'Clean Code', dueAt, daysOverdue: 3, amount: 30, lastNotice: null, escalated: false },
     },
   ],
-  counts: { all, overdue: all, fine_dispute: 0, report: 0 },
+  counts: { all, overdue: all, fine_dispute: 0, report: 0, no_show_dispute: 0 },
   emailEnabled: false,
 })
 const ONE = queue(1)

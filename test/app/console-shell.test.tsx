@@ -39,7 +39,7 @@ const ATTENTION: AttentionQueue = {
       overdue: { loanId: 'loan-1', title: 'Clean Code', dueAt: DUE, daysOverdue: 3, amount: 30, lastNotice: null, escalated: false },
     },
   ],
-  counts: { all: 1, overdue: 1, fine_dispute: 0, report: 0 },
+  counts: { all: 1, overdue: 1, fine_dispute: 0, report: 0, no_show_dispute: 0 },
   emailEnabled: false,
 }
 

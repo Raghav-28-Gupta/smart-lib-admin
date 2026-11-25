@@ -55,6 +55,7 @@ const CANCELLED = booking({
   id: 'b5', resource: { id: 'r5', name: 'Discussion Pod 3', type: 'room' }, status: 'cancelled', cancelledBy: 'library',
   cancelReason: 'Pod flooded, sorry', canManage: false, ...slot(-3),
 })
+const NO_SHOW = booking({ id: 'b6', resource: { id: 'r6', name: 'Group Room 105', type: 'room' }, student: ROHAN, status: 'no_show', canManage: false, ...slot(-4) })
 const ALL = [BOOKED, CHECKED_IN, COMPLETED, RELEASED, CANCELLED]
 
 const page = (bookings: AdminBooking[], total = bookings.length, pageNumber = 1): BookingsResponse => ({ bookings, total, page: pageNumber, pageSize: 25 })
@@ -161,16 +162,43 @@ describe('Bookings page', () => {
     expect(q.has('search')).toBe(false)
   })
 
-  it('offers the canvas statuses, with Released spelled out and no No-show', async () => {
-    bookingsApi(() => json(200, page(ALL)))
+  it('lists a no-show row with the No-show tag', async () => {
+    bookingsApi(() => json(200, page([...ALL, NO_SHOW])))
     renderPage()
     await screen.findByRole('table')
+
+    const row = within(rowOf('Group Room 105'))
+    expect(row.getByText('No-show')).toHaveClass('tag', 'tag-accent')
+    expect(row.getByText('Rohan Verma')).toBeInTheDocument()
+    expect(row.getByText(dayLabel(-4))).toBeInTheDocument()
+    expect(row.getByText('2–3 PM')).toBeInTheDocument()
+    // A released row keeps its own tag next to it.
+    expect(within(rowOf('Quiet Corner - Seat 07')).getByText('Released')).toHaveClass('tag', 'tag-neutral')
+    expect(screen.getByText('1–6 of 6 bookings')).toBeInTheDocument()
+  })
+
+  it('the status filter offers No-show and sends status=no_show', async () => {
+    const fetch = bookingsApi((q) => json(200, q.get('status') === 'no_show' ? page([NO_SHOW]) : page([...ALL, NO_SHOW])))
+    renderPage()
+    await screen.findByRole('table')
+    // The canvas's order, with Released spelled out.
     const options = within(statusSelect()).getAllByRole('option')
     expect(options.map((o) => o.textContent)).toEqual([
-      'All statuses', 'Booked', 'Checked in', 'Completed', 'Released (grace period)', 'Cancelled',
+      'All statuses', 'Booked', 'Checked in', 'Completed', 'No-show', 'Cancelled', 'Released (grace period)',
     ])
-    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual(['all', 'booked', 'checked_in', 'completed', 'released', 'cancelled'])
+    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual([
+      'all', 'booked', 'checked_in', 'completed', 'no_show', 'cancelled', 'released',
+    ])
     expect(statusSelect()).toHaveValue('all')
+
+    await userEvent.selectOptions(statusSelect(), 'No-show')
+    expect(statusSelect()).toHaveValue('no_show')
+    expect(fetch.query().get('status')).toBe('no_show')
+    expect(fetch.query().get('page')).toBe('1')
+    expect(fetch.query().get('pageSize')).toBe('25')
+    expect(await screen.findByText('1 of 1 booking')).toBeInTheDocument()
+    expect(within(screen.getByRole('table')).getByText('No-show')).toHaveClass('tag', 'tag-accent')
+    expect(screen.queryByText('Group Room 201')).toBeNull()
   })
 
   it("the Bookings page links the student's name to the student page with from=bookings", async () => {
@@ -516,6 +544,43 @@ describe('Bookings page: cancel and reassign', () => {
       expect(within(rowOf(name)).queryByRole('button')).toBeNull()
     }
     expect(screen.getAllByRole('button')).toHaveLength(2)
+  })
+
+  it('no-show and released rows offer no Cancel or Move', async () => {
+    bookingsApi(() => json(200, page([BOOKED, RELEASED, NO_SHOW])))
+    renderPage()
+    await screen.findByRole('table')
+
+    // The server's canManage is false for both, so neither row has a button; the booked row keeps its two.
+    expect(within(rowOf('Group Room 105')).getByText('No-show')).toBeInTheDocument()
+    expect(within(rowOf('Group Room 105')).queryByRole('button')).toBeNull()
+    expect(within(rowOf('Quiet Corner - Seat 07')).queryByRole('button')).toBeNull()
+    expect(within(rowOf('Group Room 201')).getAllByRole('button')).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Reassign' })).toHaveLength(1)
+  })
+
+  it("a refused cancel of a released booking shows the server's message", async () => {
+    const released = booking({ ...BOOKED, status: 'released', canManage: false })
+    let served = 0
+    const fetch = bookingsApi(() => json(200, page(++served === 1 ? [BOOKED] : [released])), {
+      'POST /admin/bookings/b1/cancel': () => json(409, { error: 'This booking has already been released.' }),
+    })
+    renderPage()
+    await screen.findByRole('table')
+    await userEvent.click(rowButton('Group Room 201', 'Cancel'))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel booking' }))
+
+    expect(await screen.findByText('This booking has already been released.')).toBeInTheDocument()
+    expect(screen.queryByText("Cancelled Rohan Verma's booking of Group Room 201.")).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(posts(fetch)).toHaveLength(1)
+
+    // The list is fetched again: the row now reads Released and offers nothing.
+    const row = within(rowOf('Group Room 201'))
+    expect(await row.findByText('Released')).toHaveClass('tag', 'tag-neutral')
+    expect(listCalls(fetch)).toHaveLength(2)
+    expect(row.queryByRole('button')).toBeNull()
   })
 
   it('cancel sends the reason, toasts, and refetches', async () => {

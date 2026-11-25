@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AttentionPage from '@/app/(console)/attention/page'
 import { ToastProvider } from '@/components/Toasts'
 import { writeToken } from '@/lib/api'
-import type { AttentionItem, AttentionQueue, FineDisputeItem, LastNotice, OverdueItem, ReportItem } from '@/lib/attention'
+import type {
+  AttentionItem, AttentionQueue, FineDisputeItem, LastNotice, NoShowDisputeItem, OverdueItem, ReportItem,
+} from '@/lib/attention'
 import { AttentionProvider } from '@/lib/attentionContext'
 import type { LiveHandlers } from '@/lib/live'
 import { LiveProvider } from '@/lib/liveContext'
@@ -83,6 +85,23 @@ function resourceReport(
   }
 }
 
+// A student's dispute of a no-show. The item's id is the dispute's id, which is what the overturn and uphold routes take.
+// The booking was an afternoon two days ago: 08:30Z to 10:30Z is 2 to 4 PM on the library's clock (Asia/Kolkata, UTC+5:30).
+const BOOKED = new Date(Date.now() - 2 * 86_400_000)
+BOOKED.setUTCHours(8, 30, 0, 0)
+const BOOKED_LINE = `${new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' }).format(BOOKED)}, 2–4 PM`
+function noShowDispute(
+  disputeId: string, student: AttentionItem['student'], resource: string, days: number, studentReason: string,
+): NoShowDisputeItem {
+  return {
+    id: disputeId, kind: 'no_show_dispute', student, waitingSince: daysAgoIso(days),
+    noShow: {
+      disputeId, bookingId: `b-${disputeId}`, resource: { id: `res-${disputeId}`, name: resource },
+      startTime: BOOKED.toISOString(), endTime: new Date(BOOKED.getTime() + 2 * 3_600_000).toISOString(), studentReason,
+    },
+  }
+}
+
 // Oldest waiting first, as the server answers.
 const CLEAN_CODE =overdue('l1', ADITI, 'Clean Code', 3, 30, { kind: 'reminder', at: daysAgoIso(2), emailStatus: 'sent' })
 const NETWORKS = overdue('l2', ROHAN, 'Computer Networks', 2, 20, { kind: 'escalation', at: daysAgoIso(1), emailStatus: 'skipped' }, true)
@@ -95,6 +114,7 @@ const queue = (items: AttentionItem[], over: Partial<AttentionQueue> = {}): Atte
     overdue: items.filter((i) => i.kind === 'overdue').length,
     fine_dispute: items.filter((i) => i.kind === 'fine_dispute').length,
     report: items.filter((i) => i.kind === 'report').length,
+    no_show_dispute: items.filter((i) => i.kind === 'no_show_dispute').length,
   },
   emailEnabled: true,
   ...over,
@@ -188,6 +208,7 @@ describe('Needs attention page', () => {
     expect(chip('All (3)')).toHaveAttribute('aria-pressed', 'true')
     expect(chip('Overdue follow-ups (3)')).toHaveAttribute('aria-pressed', 'false')
     expect(chip('Fine disputes (0)')).toBeInTheDocument()
+    expect(chip('No-show disputes (0)')).toBeInTheDocument()
     expect(chip('Maintenance flags (0)')).toBeInTheDocument()
 
     await userEvent.click(chip('Overdue follow-ups (3)'))
@@ -207,31 +228,56 @@ describe('Needs attention page', () => {
   })
 
   it('takes every count from the server, so a kind this page cannot draw yet still counts', async () => {
+    // All is 8 though the four chips add up to 7: the eighth is a kind a newer server added.
     mockFetch({
-      'GET /admin/attention': () => json(200, queue([CLEAN_CODE], { counts: { all: 5, overdue: 1, fine_dispute: 3, report: 1 } })),
+      'GET /admin/attention': () =>
+        json(200, queue([CLEAN_CODE], { counts: { all: 8, overdue: 1, fine_dispute: 3, report: 1, no_show_dispute: 2 } })),
     })
     renderPage()
-    expect(await screen.findByRole('button', { name: 'All (5)' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'All (8)' })).toBeInTheDocument()
     expect(chip('Overdue follow-ups (1)')).toBeInTheDocument()
     expect(chip('Fine disputes (3)')).toBeInTheDocument()
+    expect(chip('No-show disputes (2)')).toBeInTheDocument()
     expect(chip('Maintenance flags (1)')).toBeInTheDocument()
   })
 
-  it('an item of a kind this console does not know (a newer server) is left out: the page still renders, and the known items show', async () => {
-    // Spec section 2: the queue is built so that a kind can be added later, and the backend deploys before this console.
-    const unknown = {
-      id: 'n1', kind: 'no_show_dispute', student: ROHAN, waitingSince: daysAgoIso(2), noShow: { bookingId: 'b1' },
-    } as unknown as AttentionItem
-    mockFetch({ 'GET /admin/attention': () => json(200, queue([CLEAN_CODE, unknown, SAPIENS])) })
+  it('reads a count the server leaves out as 0, not undefined (a backend that predates no-show disputes)', async () => {
+    // The console can deploy before the backend: its counts have no no_show_dispute key.
+    const stale = { all: 1, overdue: 1, fine_dispute: 0, report: 0 } as AttentionQueue['counts']
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([CLEAN_CODE], { counts: stale })) })
     renderPage()
+    expect(await screen.findByRole('button', { name: 'All (1)' })).toBeInTheDocument()
+    expect(chip('No-show disputes (0)')).toBeInTheDocument()
+    expect(screen.queryByText(/undefined/)).toBeNull()
+  })
+
+  it('an unknown item kind does not crash the page', async () => {
+    // Spec section 2: the queue is built so that a kind can be added later, and the backend deploys before this console.
+    // The item is left out of the list; the known kinds (a no-show dispute among them) draw as usual.
+    const unknown = {
+      id: 'n1', kind: 'loan_waiver', student: ROHAN, waitingSince: daysAgoIso(2), loanWaiver: { loanId: 'l9' },
+    } as unknown as AttentionItem
+    const nd = noShowDispute('nd1', MEERA, 'Discussion Pod 3', 1, 'I did check in.')
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([CLEAN_CODE, unknown, nd, SAPIENS], { counts: { all: 4, overdue: 2, fine_dispute: 0, report: 0, no_show_dispute: 1 } })) })
+    const view = renderPage()
 
     expect(await screen.findByText('Clean Code — 3 days overdue')).toBeInTheDocument()
     expect(screen.getByText('Sapiens — 1 day overdue')).toBeInTheDocument()
+    expect(screen.getByText('Disputes no-show flag on Discussion Pod 3')).toBeInTheDocument()
     expect(screen.getAllByText(/ days? overdue$/)).toHaveLength(2)
     expect(screen.queryByText("Couldn't load the queue")).toBeNull()
+    expect(screen.queryByText('Rohan Verma')).toBeNull()
     // The counts are the server's, so the unknown item still counts in All (and in the sidebar badge, which reads the same number).
-    expect(chip('All (3)')).toBeInTheDocument()
+    expect(chip('All (4)')).toBeInTheDocument()
     expect(chip('Overdue follow-ups (2)')).toBeInTheDocument()
+    expect(chip('No-show disputes (1)')).toBeInTheDocument()
+
+    // Only unknown kinds in the queue: nothing to draw, and the page still says so rather than failing.
+    view.unmount()
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([unknown], { counts: { all: 1, overdue: 0, fine_dispute: 0, report: 0, no_show_dispute: 0 } })) })
+    renderPage()
+    expect(await screen.findByText("You're all caught up")).toBeInTheDocument()
+    expect(screen.queryByText("Couldn't load the queue")).toBeNull()
   })
 
   it('?type=fine_dispute and ?type=report select their chips; an unknown type falls back to All', async () => {
@@ -266,14 +312,13 @@ describe('Needs attention page', () => {
     expect(chip('Overdue follow-ups (3)')).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('no No-show chip', async () => {
+  it("the chips come in the canvas's order, No-show disputes between Fine disputes and Maintenance flags", async () => {
     mockFetch({ 'GET /admin/attention': () => json(200, THREE) })
     renderPage()
     await screen.findByText('Clean Code — 3 days overdue')
-    expect(screen.queryByRole('button', { name: /No-show/ })).toBeNull()
     // The chips are the buttons that can be pressed: the cards' own buttons are not among them.
     expect(screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed')).map((b) => b.textContent)).toEqual([
-      'All (3)', 'Overdue follow-ups (3)', 'Fine disputes (0)', 'Maintenance flags (0)',
+      'All (3)', 'Overdue follow-ups (3)', 'Fine disputes (0)', 'No-show disputes (0)', 'Maintenance flags (0)',
     ])
   })
 
@@ -1770,5 +1815,481 @@ describe('Needs attention problem reports', () => {
     expect(await screen.findByText('Copy flagged.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(writes(fetch)).toHaveLength(1)
+  })
+})
+
+describe('Needs attention no-show disputes', () => {
+  const WORDS = 'I checked in at the desk but the app never registered it.'
+  const REASON = 'The desk log shows the check-in'
+  // Oldest waiting first: ND1 (2 days), ND2 (1 day).
+  const ND1 = noShowDispute('nd1', ROHAN, 'Discussion Pod 3', 2, WORDS)
+  const ND2 = noShowDispute('nd2', MEERA, 'Study Seat 14', 1, 'The door was locked, so I waited outside.')
+  const ND1_SUMMARY = 'Disputes no-show flag on Discussion Pod 3'
+  const ND2_SUMMARY = 'Disputes no-show flag on Study Seat 14'
+  const OVERTURN_BODY = "Rohan Verma's reliability score is restored and the flag is removed. A reason is required for the record."
+  const UPHOLD_BODY = `The dispute is closed and the flag stands. ${ND1_SUMMARY}.`
+  const LONG = `${'The desk never scanned it. '.repeat(11)}End.`.slice(0, 300)
+  const MARKUP = '<img src=x onerror="alert(1)"> <b>please</b> reconsider'
+
+  const openOverturn = async (summary = ND1_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Overturn no-show'))
+    return dialogOf('Overturn this no-show flag?')
+  }
+  const openUphold = async (summary = ND1_SUMMARY) => {
+    await userEvent.click(buttonOf(summary, 'Uphold flag'))
+    return dialogOf('Uphold the no-show flag?')
+  }
+  const reasonOf = (dialog: HTMLElement) => within(dialog).getByLabelText('Reason (required)')
+  const noteOf = (dialog: HTMLElement) => within(dialog).getByLabelText('Note (optional)')
+  const bodyOf = (fetch: Fetch, index = 0) => JSON.parse(writes(fetch)[index][1]!.body as string)
+
+  it("shows a no-show dispute card with the student's words in full and the booking line", async () => {
+    const wordy = noShowDispute('nd3', ADITI, 'Group Room 201', 3, LONG)
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([wordy, ND1, ND2])) })
+    renderPage()
+    await screen.findByText(ND1_SUMMARY)
+
+    const card = inCard(ND1_SUMMARY)
+    // The canvas's accent tag (the neutral one is the Maintenance flag's), the student's link and how long it has waited.
+    expect(card.getByText('No-show dispute')).toHaveClass('tag', 'tag-accent')
+    expect(card.getByText('No-show dispute')).not.toHaveClass('tag-neutral')
+    expect(card.getByRole('link', { name: 'Rohan Verma' })).toHaveAttribute('href', '/students/s2?from=attention')
+    expect(card.getByText('waiting 2 days')).toBeInTheDocument()
+    // The booking, in the library's time zone, and the student's own words.
+    expect(card.getByText(BOOKED_LINE)).toBeInTheDocument()
+    expect(card.getByText(WORDS)).toBeInTheDocument()
+    expect(card.getByRole('button', { name: 'Overturn no-show' })).toBeEnabled()
+    expect(card.getByRole('button', { name: 'Uphold flag' })).toBeEnabled()
+    // None of the other cards' actions, or their tags.
+    for (const name of ['Send reminder', 'Escalate', 'Waive / adjust', 'Uphold fine', 'Dismiss', 'Take offline', 'Confirm & flag copy']) {
+      expect(card.queryByRole('button', { name })).toBeNull()
+    }
+    expect(card.queryByText('Fine dispute')).toBeNull()
+    expect(card.queryByText('Maintenance flag')).toBeNull()
+
+    // Every card has its own resource and words, and they keep the order the server sent.
+    expect(screen.getAllByText('No-show dispute')).toHaveLength(3)
+    const summaries = screen.getAllByText(/^Disputes no-show flag on /).map((el) => el.textContent)
+    expect(summaries).toEqual(['Disputes no-show flag on Group Room 201', ND1_SUMMARY, ND2_SUMMARY])
+
+    // A 300-character reason is in the card's text whole: nothing on its line cuts it, and no tooltip stands in for the rest.
+    expect(LONG).toHaveLength(300)
+    const words = within(cardOf('Disputes no-show flag on Group Room 201')).getByText(LONG)
+    expect(words).toHaveTextContent(LONG)
+    expect(words.style.getPropertyValue('-webkit-line-clamp')).toBe('')
+    expect(words.style.display).not.toBe('-webkit-box')
+    expect(words.style.overflow).not.toBe('hidden')
+    expect(words).not.toHaveAttribute('title')
+  })
+
+  it('the chip counts and filters no-show disputes', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([CLEAN_CODE, ND1, SAPIENS, ND2])) })
+    const first = renderPage()
+    await screen.findByText(ND1_SUMMARY)
+    expect(chip('All (4)')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('Overdue follow-ups (2)')).toBeInTheDocument()
+    expect(chip('Fine disputes (0)')).toBeInTheDocument()
+    expect(chip('No-show disputes (2)')).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('Maintenance flags (0)')).toBeInTheDocument()
+
+    await userEvent.click(chip('No-show disputes (2)'))
+    expect(chip('No-show disputes (2)')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('All (4)')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getAllByText(/^Disputes no-show flag on /)).toHaveLength(2)
+    expect(screen.queryByText('Clean Code — 3 days overdue')).toBeNull()
+    expect(screen.queryByText('Sapiens — 1 day overdue')).toBeNull()
+
+    // The other chip hides them again.
+    await userEvent.click(chip('Overdue follow-ups (2)'))
+    expect(screen.queryByText(ND1_SUMMARY)).toBeNull()
+    expect(screen.queryByText(ND2_SUMMARY)).toBeNull()
+    expect(screen.getByText('Clean Code — 3 days overdue')).toBeInTheDocument()
+    first.unmount()
+
+    // ?type=no_show_dispute opens with the chip selected.
+    nav.search = 'type=no_show_dispute'
+    const second = renderPage()
+    expect(await screen.findByRole('button', { name: 'No-show disputes (2)' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(ND2_SUMMARY)).toBeInTheDocument()
+    expect(screen.queryByText('Clean Code — 3 days overdue')).toBeNull()
+    second.unmount()
+
+    // With other kinds queued and no no-show disputes, the chip says so and Clear filter goes back to All.
+    nav.search = ''
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([SAPIENS])) })
+    renderPage()
+    await screen.findByText('Sapiens — 1 day overdue')
+    await userEvent.click(chip('No-show disputes (0)'))
+    expect(screen.getByText('No no-show disputes waiting')).toBeInTheDocument()
+    expect(screen.queryByText("You're all caught up")).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Clear filter' }))
+    expect(screen.getByText('Sapiens — 1 day overdue')).toBeInTheDocument()
+  })
+
+  it('Overturn needs a reason, sends POST /admin/no-show-disputes/:id/overturn {reason} and refetches', async () => {
+    let current = queue([ND1, ND2])
+    const fetch = mockFetch({
+      'GET /admin/attention': () => json(200, current),
+      'POST /admin/no-show-disputes/nd1/overturn': () => {
+        current = queue([ND2])
+        return json(200, { id: 'nd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(ND1_SUMMARY)
+    expect(chip('No-show disputes (2)')).toBeInTheDocument()
+
+    const dialog = await openOverturn()
+    expect(dialog).toHaveTextContent(OVERTURN_BODY)
+    const reason = reasonOf(dialog)
+    expect(reason).toHaveAttribute('placeholder', 'Why is this no-show being overturned?')
+    expect(reason).toHaveAttribute('maxlength', '300')
+    expect(reason).toHaveFocus()
+    const confirm = confirmOf(dialog, 'Overturn flag')
+    expect(confirm).toBeDisabled()
+
+    // A reason of spaces is no reason: still off, and nothing was sent.
+    await userEvent.type(reason, '   ')
+    expect(confirm).toBeDisabled()
+    expect(writes(fetch)).toHaveLength(0)
+
+    await userEvent.type(reason, `  ${REASON}  `)
+    expect(confirm).toBeEnabled()
+    await userEvent.click(confirm)
+
+    expect(await screen.findByText('No-show overturned.')).toBeInTheDocument()
+    expect(writes(fetch)).toHaveLength(1)
+    // The dispute's id in the path, the reason trimmed in the body.
+    expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/no-show-disputes\/nd1\/overturn$/)
+    expect(bodyOf(fetch)).toEqual({ reason: REASON })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(reads(fetch)).toHaveLength(2)
+    expect(screen.queryByText(ND1_SUMMARY)).toBeNull()
+    expect(screen.getByText(ND2_SUMMARY)).toBeInTheDocument()
+    expect(chip('No-show disputes (1)')).toBeInTheDocument()
+    expect(chip('All (1)')).toBeInTheDocument()
+  })
+
+  it('Uphold sends POST .../uphold with and without a note', async () => {
+    const cases: [string, object][] = [
+      [`  ${REASON}  `, { note: REASON }],
+      ['   ', {}],
+      ['', {}],
+    ]
+    for (const [typed, body] of cases) {
+      let current = queue([ND1, ND2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/no-show-disputes/nd1/uphold': () => {
+          current = queue([ND2])
+          return json(200, { id: 'nd1' })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(ND1_SUMMARY)
+
+      const dialog = await openUphold()
+      expect(dialog).toHaveTextContent(UPHOLD_BODY)
+      const note = noteOf(dialog)
+      expect(note).toHaveAttribute('maxlength', '300')
+      expect(note).toHaveFocus()
+      expect(confirmOf(dialog, 'Uphold flag')).toBeEnabled() // the note is optional
+      expect(writes(fetch)).toHaveLength(0)
+
+      if (typed) await userEvent.type(note, typed)
+      await userEvent.click(confirmOf(dialog, 'Uphold flag'))
+
+      expect(await screen.findByText('No-show flag upheld.')).toBeInTheDocument()
+      expect(writes(fetch)).toHaveLength(1)
+      expect(String(writes(fetch)[0][0])).toMatch(/\/admin\/no-show-disputes\/nd1\/uphold$/)
+      expect(bodyOf(fetch)).toEqual(body)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(reads(fetch)).toHaveLength(2)
+      expect(screen.queryByText(ND1_SUMMARY)).toBeNull()
+      expect(chip('No-show disputes (1)')).toBeInTheDocument()
+      view.unmount()
+    }
+  })
+
+  it('Cancel in either dialog sends nothing and gives focus back to the button that opened it', async () => {
+    const fetch = mockFetch({ 'GET /admin/attention': () => json(200, queue([ND1])) })
+    renderPage()
+    await screen.findByText(ND1_SUMMARY)
+
+    const overturn = await openOverturn()
+    await userEvent.type(reasonOf(overturn), REASON)
+    await userEvent.click(within(overturn).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(buttonOf(ND1_SUMMARY, 'Overturn no-show')).toHaveFocus()
+
+    const uphold = await openUphold()
+    await userEvent.click(within(uphold).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(buttonOf(ND1_SUMMARY, 'Uphold flag')).toHaveFocus()
+    expect(writes(fetch)).toHaveLength(0)
+
+    // A dialog opened again starts empty: what was typed before Cancel is gone.
+    const again = await openOverturn()
+    expect(reasonOf(again)).toHaveValue('')
+  })
+
+  it('a 409 "This dispute was already resolved." keeps the dialog and its text', async () => {
+    // Someone else resolved the dispute meanwhile (409), or it is gone (404). The refetch drops the card, and the dialog
+    // stays up with what was typed and the student's words until the librarian cancels: a closed dispute cannot be settled again.
+    const refusals: [number, string][] = [
+      [409, 'This dispute was already resolved.'],
+      [404, 'No-show dispute not found'],
+    ]
+    for (const [status, message] of refusals) {
+      let current = queue([ND1, ND2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/no-show-disputes/nd1/overturn': () => {
+          current = queue([ND2])
+          return json(status, { error: message })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(ND1_SUMMARY)
+      const dialog = await openOverturn()
+      await userEvent.type(reasonOf(dialog), REASON)
+      const confirm = confirmOf(dialog, 'Overturn flag')
+      await userEvent.click(confirm)
+
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(screen.queryByText('No-show overturned.')).toBeNull()
+      await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+      await waitFor(() => expect(screen.queryByText(ND1_SUMMARY)).toBeNull())
+      expect(screen.getByRole('dialog', { name: 'Overturn this no-show flag?' })).toBe(dialog)
+      expect(reasonOf(dialog)).toHaveValue(REASON)
+      expect(within(dialog).getByText(WORDS)).toBeInTheDocument()
+      await waitFor(() => expect(confirm).toBeEnabled())
+      expect(confirm).toHaveFocus()
+      expect(writes(fetch)).toHaveLength(1)
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      view.unmount()
+    }
+
+    for (const [status, message] of refusals) {
+      let current = queue([ND1, ND2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        'POST /admin/no-show-disputes/nd1/uphold': () => {
+          current = queue([ND2])
+          return json(status, { error: message })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(ND1_SUMMARY)
+      const dialog = await openUphold()
+      await userEvent.type(noteOf(dialog), REASON)
+      const confirm = confirmOf(dialog, 'Uphold flag')
+      await userEvent.click(confirm)
+
+      expect(await screen.findByText(message)).toBeInTheDocument()
+      expect(screen.queryByText('No-show flag upheld.')).toBeNull()
+      await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+      await waitFor(() => expect(screen.queryByText(ND1_SUMMARY)).toBeNull())
+      expect(screen.getByRole('dialog', { name: 'Uphold the no-show flag?' })).toBe(dialog)
+      expect(noteOf(dialog)).toHaveValue(REASON)
+      expect(within(dialog).getByText(WORDS)).toBeInTheDocument()
+      await waitFor(() => expect(confirm).toBeEnabled())
+      expect(confirm).toHaveFocus()
+      expect(writes(fetch)).toHaveLength(1)
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      view.unmount()
+    }
+  })
+
+  it('a network failure keeps the dialog', async () => {
+    const network = "Can't reach the SmartLib server. Try again in a minute."
+    for (const dialogKind of ['overturn', 'uphold'] as const) {
+      let reachable = false
+      let current = queue([ND1, ND2])
+      const fetch = mockFetch({
+        'GET /admin/attention': () => json(200, current),
+        [`POST /admin/no-show-disputes/nd1/${dialogKind}`]: () => {
+          if (!reachable) throw new TypeError('Failed to fetch')
+          current = queue([ND2])
+          return json(200, { id: 'nd1' })
+        },
+      })
+      const view = renderPage()
+      await screen.findByText(ND1_SUMMARY)
+      const dialog = dialogKind === 'overturn' ? await openOverturn() : await openUphold()
+      const field = dialogKind === 'overturn' ? reasonOf(dialog) : noteOf(dialog)
+      await userEvent.type(field, REASON)
+      const confirm = confirmOf(dialog, dialogKind === 'overturn' ? 'Overturn flag' : 'Uphold flag')
+      await userEvent.click(confirm)
+
+      expect(await screen.findByText(network)).toBeInTheDocument()
+      await waitFor(() => expect(reads(fetch)).toHaveLength(2))
+      expect(screen.getByRole('dialog')).toBe(dialog)
+      expect(field).toHaveValue(REASON)
+      await waitFor(() => expect(confirm).toBeEnabled())
+      expect(confirm).toHaveFocus()
+      expect(screen.getByText(ND1_SUMMARY)).toBeInTheDocument()
+      expect(writes(fetch)).toHaveLength(1)
+
+      // The request never arrived, so nothing was decided: once the network is back the same dialog sends it.
+      reachable = true
+      await userEvent.click(confirm)
+      expect(await screen.findByText(dialogKind === 'overturn' ? 'No-show overturned.' : 'No-show flag upheld.')).toBeInTheDocument()
+      expect(writes(fetch)).toHaveLength(2)
+      expect(bodyOf(fetch, 1)).toEqual(dialogKind === 'overturn' ? { reason: REASON } : { note: REASON })
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      view.unmount()
+    }
+  })
+
+  it("the dialogs show the student's words and render markup as text", async () => {
+    const wordy = noShowDispute('nd3', MEERA, 'Study Pod 5', 1, LONG)
+    const tricky = noShowDispute('nd4', ROHAN, 'Study Pod 6', 2, MARKUP)
+    const WORDY_SUMMARY = 'Disputes no-show flag on Study Pod 5'
+    const TRICKY_SUMMARY = 'Disputes no-show flag on Study Pod 6'
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([tricky, wordy])) })
+    const { container } = renderPage()
+    await screen.findByText(WORDY_SUMMARY)
+
+    // On the card, as text.
+    expect(within(cardOf(TRICKY_SUMMARY)).getByText(MARKUP)).toBeInTheDocument()
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('b')).toBeNull()
+
+    // A reason up to 300 characters shows whole above the field the librarian types in, so a dispute is never settled unread.
+    const overturn = await openOverturn(WORDY_SUMMARY)
+    expect(within(overturn).getByText(LONG)).toBeInTheDocument()
+    expect(within(overturn).getByText("The student's reason")).toBeInTheDocument()
+    expect(overturn).toHaveTextContent("Meera Iyer's reliability score is restored and the flag is removed. A reason is required for the record.")
+    expect(reasonOf(overturn)).toHaveValue('') // the student's words are not the librarian's reason
+    await userEvent.click(within(overturn).getByRole('button', { name: 'Cancel' }))
+
+    const uphold = await openUphold(WORDY_SUMMARY)
+    expect(within(uphold).getByText(LONG)).toBeInTheDocument()
+    expect(within(uphold).getByText("The student's reason")).toBeInTheDocument()
+    expect(uphold).toHaveTextContent(`The dispute is closed and the flag stands. ${WORDY_SUMMARY}.`)
+    await userEvent.click(within(uphold).getByRole('button', { name: 'Cancel' }))
+
+    // Markup is text in both dialogs, and another dispute's words are not there.
+    for (const open of [openOverturn, openUphold]) {
+      const dialog = await open(TRICKY_SUMMARY)
+      expect(within(dialog).getByText(MARKUP)).toBeInTheDocument()
+      expect(dialog.querySelector('img')).toBeNull()
+      expect(dialog.querySelector('b')).toBeNull()
+      expect(within(dialog).queryByText(LONG)).toBeNull()
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    }
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('buttons on every card stay disabled until the list has refetched, and a second click in flight is one write', async () => {
+    const refetching = gate()
+    const saving = gate()
+    let served = 0
+    let current = queue([CLEAN_CODE, ND1, ND2])
+    const fetch = mockFetch({
+      'GET /admin/attention': async () => {
+        if (++served > 1) await refetching.promise
+        return json(200, current)
+      },
+      'POST /admin/no-show-disputes/nd1/overturn': async () => {
+        await saving.promise
+        current = queue([CLEAN_CODE, ND2])
+        return json(200, { id: 'nd1' })
+      },
+    })
+    renderPage()
+    await screen.findByText(ND1_SUMMARY)
+    const dialog = await openOverturn()
+    await userEvent.type(reasonOf(dialog), REASON)
+    await userEvent.dblClick(confirmOf(dialog, 'Overturn flag'))
+    expect(writes(fetch)).toHaveLength(1)
+    expect(confirmOf(dialog, 'Overturn flag')).toBeDisabled()
+
+    // Another card's buttons are off while it is in flight, so no second dialog opens and no second write is sent.
+    await userEvent.click(buttonOf(ND2_SUMMARY, 'Overturn no-show'))
+    await userEvent.click(buttonOf(ND2_SUMMARY, 'Uphold flag'))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1)
+
+    saving.open()
+    await screen.findByText('No-show overturned.')
+    // The write landed and the list is not back yet: the dialog cannot be confirmed again, and every card's actions are off.
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    expect(confirmOf(dialog, 'Overturn flag')).toBeDisabled()
+    const cards: [string, string[]][] = [
+      ['Clean Code — 3 days overdue', ['Send reminder', 'Escalate']],
+      [ND1_SUMMARY, ['Overturn no-show', 'Uphold flag']],
+      [ND2_SUMMARY, ['Overturn no-show', 'Uphold flag']],
+    ]
+    for (const [summary, names] of cards) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeDisabled()
+    }
+
+    refetching.open()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByText(ND1_SUMMARY)).toBeNull()
+    for (const [summary, names] of cards.filter(([summary]) => summary !== ND1_SUMMARY)) {
+      for (const name of names) expect(buttonOf(summary, name)).toBeEnabled()
+    }
+    expect(writes(fetch)).toHaveLength(1)
+  })
+})
+
+describe('Needs attention student text keeps its line breaks', () => {
+  // A student's words can run over several lines (a textarea allows them): the card and the dialogs show them as typed.
+  const WORDS = 'I was there at 2.\nThe door was locked.\n\nPlease check the desk log.'
+  // The line holding exactly these words: the default text matcher folds line breaks into spaces, so match on the raw text.
+  const wordsLine = (scope: ReturnType<typeof within>) =>
+    scope.getByText((_: string, el: Element | null) => el?.tagName === 'DIV' && el.children.length === 0 && el.textContent === WORDS)
+  const keepsBreaks = (line: HTMLElement) => {
+    expect(line.style.getPropertyValue('white-space')).toBe('pre-line')
+    expect(line.style.getPropertyValue('overflow-wrap')).toBe('anywhere')
+  }
+
+  it('a no-show dispute card and both of its dialogs show each line on its own line', async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([noShowDispute('nd1', ROHAN, 'Discussion Pod 3', 2, WORDS)])) })
+    renderPage()
+    await screen.findByText('Disputes no-show flag on Discussion Pod 3')
+    const summary = 'Disputes no-show flag on Discussion Pod 3'
+
+    keepsBreaks(wordsLine(inCard(summary)))
+
+    await userEvent.click(buttonOf(summary, 'Overturn no-show'))
+    const overturn = dialogOf('Overturn this no-show flag?')
+    keepsBreaks(wordsLine(within(overturn)))
+    await userEvent.click(within(overturn).getByRole('button', { name: 'Cancel' }))
+
+    await userEvent.click(buttonOf(summary, 'Uphold flag'))
+    const uphold = dialogOf('Uphold the no-show flag?')
+    keepsBreaks(wordsLine(within(uphold)))
+  })
+
+  it("a fine dispute card, its Uphold dialog and the adjust dialog's context show each line on its own line", async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([dispute('d1', ROHAN, 'Clean Code', 2, 150, WORDS)])) })
+    renderPage()
+    const summary = 'Disputes ₹150 Overdue fine on Clean Code'
+    await screen.findByText(summary)
+
+    keepsBreaks(wordsLine(inCard(summary)))
+
+    await userEvent.click(buttonOf(summary, 'Uphold fine'))
+    const uphold = dialogOf('Uphold this fine?')
+    keepsBreaks(wordsLine(within(uphold)))
+    await userEvent.click(within(uphold).getByRole('button', { name: 'Cancel' }))
+
+    await userEvent.click(buttonOf(summary, 'Waive / adjust'))
+    keepsBreaks(wordsLine(within(dialogOf('Waive or adjust this fine'))))
+  })
+
+  it("a problem report's note keeps its line breaks in the dialogs too (the card clamps it to two lines)", async () => {
+    mockFetch({ 'GET /admin/attention': () => json(200, queue([copyReport('r1', ROHAN, 3, 'damaged', WORDS)])) })
+    renderPage()
+    const summary = 'Copy SL-000123 of Clean Code, reported at return: Damaged'
+    await screen.findByText(summary)
+
+    await userEvent.click(buttonOf(summary, 'Dismiss'))
+    keepsBreaks(wordsLine(within(dialogOf('Dismiss this report?'))))
   })
 })

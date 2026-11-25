@@ -64,6 +64,16 @@ const EMPTY: DashboardMetrics = {
 
 const NONE: PendingRequests = { requests: [], counts: { all: 0, borrow: 0, room: 0 } }
 
+/** A borrow request for Clean Code made `minutes` ago. */
+const asking = (id: string, name: string, minutes: number): PendingRequest => ({
+  id,
+  kind: 'borrow',
+  student: { id: `u-${id}`, name, email: `${id}@thapar.edu` },
+  requestedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
+  expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  book: { id: 'b8', title: 'Clean Code', author: 'Robert C. Martin', availableCopies: 1, totalCopies: 4 },
+})
+
 function renderDashboard() {
   writeToken('t')
   return render(
@@ -167,14 +177,6 @@ describe('Dashboard', () => {
   })
 
   it('lists the three oldest waiting requests, with View all', async () => {
-    const asking = (id: string, name: string, minutes: number): PendingRequest => ({
-      id,
-      kind: 'borrow',
-      student: { id: `u-${id}`, name, email: `${id}@thapar.edu` },
-      requestedAt: new Date(Date.now() - minutes * 60_000).toISOString(),
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      book: { id: 'b8', title: 'Clean Code', author: 'Robert C. Martin', availableCopies: 1, totalCopies: 4 },
-    })
     serve(METRICS, 200, {
       requests: [asking('1', 'Aditi Sharma', 40), asking('2', 'Rohan Verma', 30), asking('3', 'Priya Nair', 20), asking('4', 'Karan Mehta', 10)],
       counts: { all: 4, borrow: 4, room: 0 },
@@ -186,6 +188,22 @@ describe('Dashboard', () => {
     expect(screen.queryByText('Karan Mehta · Clean Code')).toBeNull()
     expect(screen.getAllByRole('button', { name: 'Approve' })).toHaveLength(3)
     expect(screen.getByRole('link', { name: 'View all' })).toHaveAttribute('href', '/requests')
+  })
+
+  it('keeps listing the three oldest, oldest first, when the server orders the requests differently', async () => {
+    // The server's default order is the suggested one: Karan (10 min) and Priya (20) are ahead of Rohan (30) and Aditi (40).
+    serve(METRICS, 200, {
+      requests: [asking('4', 'Karan Mehta', 10), asking('3', 'Priya Nair', 20), asking('2', 'Rohan Verma', 30), asking('1', 'Aditi Sharma', 40)],
+      counts: { all: 4, borrow: 4, room: 0 },
+    })
+    renderDashboard()
+    expect(await screen.findByText('Waiting for approval (4)')).toBeInTheDocument()
+    expect(screen.getAllByText(/ · Clean Code$/).map((row) => row.textContent)).toEqual([
+      'Aditi Sharma · Clean Code',
+      'Rohan Verma · Clean Code',
+      'Priya Nair · Clean Code',
+    ])
+    expect(screen.queryByText('Karan Mehta · Clean Code')).toBeNull()
   })
 
   it('says when no requests are waiting', async () => {

@@ -4,7 +4,7 @@ The librarian console for SmartLib: log in with an admin account, approve or
 decline the borrow and room requests students send, manage the study-space
 resources and the bookings on them, manage the catalogue's books and copies,
 settle fines, work through the Needs attention queue (overdue loans, disputed
-fines, problem reports), open any student's record, and see live utilisation,
+fines, problem reports, disputed no-shows), open any student's record, and see live utilisation,
 circulation, overdue and demand metrics. Everything updates live, without
 reloading. Built
 with Next.js and the Organic design system; talks only to the SmartLib API
@@ -40,6 +40,23 @@ are refused.
 The API sleeps after 15 idle minutes on Render's free plan; the console waits up
 to 60 seconds and shows its loading skeleton meanwhile.
 
+## Requests
+
+The Requests page lists the pending borrow and room requests, with **Approve** and
+**Decline** (an optional reason the student sees). Room requests are listed in the
+server's **suggested order**: a request the no-show model scored as likely to be
+missed sits up to 72 minutes later than its request time says (never hidden,
+declined or relabelled), and its card carries a small neutral second line,
+"Suggested order: 18 min later (predicted no-show risk 22%)", only when the delay is
+above zero. A request that was never scored (the AI service is not deployed in
+production, so today none is) is placed by its request time and has no note. The
+**By request time** checkbox at the end of the chip row restores plain request-time
+order (`GET /admin/requests?order=request`) and hides the note; the page puts the
+suggested order back when you leave it. Borrow requests always keep request time,
+the counts and the sidebar badge do not change with the order, and the Dashboard's
+waiting panel sorts its first three by request time itself. A newly scored request
+arrives with a `request.scored` event, so an open page reorders by itself.
+
 ## Resources
 
 The Resources page lists every seat and room by name, with its location,
@@ -63,7 +80,14 @@ page 1:
 
 - search, for a student's name or email or a resource name (sent after a short
   pause in typing);
-- status: Booked, Checked in, Completed, Released (grace period) or Cancelled.
+- status: Booked, Checked in, Completed, No-show, Cancelled or Released (grace period).
+
+A **No-show** row is a booking nobody checked into that the server recorded as
+missed (the sweep writes it within minutes of the grace period ending, and the
+student's reliability drops). **Released (grace period)** is a booking past its
+grace period that nothing has penalized: the minutes before the sweep reaches it, an
+older booking from before no-shows were recorded, or a no-show a librarian
+overturned. Neither can be cancelled or moved.
 
 A cancelled row says whether the student or the library cancelled it and, if
 one was given, why. A librarian can:
@@ -161,7 +185,9 @@ directly, the page falls back to "Dashboard". It shows:
   server's own: Good standing, Building back up, Needs improvement or At risk)
   and **Adjust reliability**;
 - the reliability card: the score ring, a line through the history, and the
-  dated list with each change's reason (a manual one names the librarian);
+  dated list with each change's reason (a manual one names the librarian; a
+  recorded no-show reads `No-show: <resource>` and an overturned one's points come
+  back as `No-show overturned: <resource>`);
 - loan, booking and fine history, newest first, up to 50 each, read-only (a fine
   is settled on the Fines page, a booking managed on the Bookings page; a
   disputed fine shows the Fines page's Disputed tag and the student's words).
@@ -178,18 +204,21 @@ The Needs attention page has its own sidebar entry, after Requests, with a badge
 counting everything waiting (hidden at 0). It lists only what needs a librarian,
 oldest wait first, one card each: a type tag, the student (a link to their page,
 which leads back here), "waiting 3 days", a summary, a detail line and two
-actions. Chips filter it: All, Overdue follow-ups, Fine disputes and Maintenance
-flags, each with its count. `/attention?type=overdue`, `fine_dispute` or `report`
-opens with a chip selected (the Dashboard's Overdue materials card links to
-`?type=overdue`); clicking a chip does not change the address. The console
-fetches the whole queue in one request (the API's `?kind=` filter is not used),
-so the chips and the badge always agree. There is no No-show chip: nothing
-records no-shows yet. An empty queue reads "You're all caught up".
+actions. Chips filter it: All, Overdue follow-ups, Fine disputes, No-show disputes
+and Maintenance flags, each with its count. `/attention?type=overdue`,
+`fine_dispute`, `no_show_dispute` or `report` opens with a chip selected (the
+Dashboard's Overdue materials card links to `?type=overdue`); clicking a chip
+does not change the address. The console fetches the whole queue in one request
+(the API's `?kind=` filter is not used), so the chips and the badge always agree.
+An item of a kind this console does not know (a newer server's) is left out of
+the list, though the counts still include it. An empty queue reads "You're all
+caught up".
 
 | Card | Shown when | Actions |
 |---|---|---|
 | Overdue follow-up | a loan is a whole day or more overdue; the detail line gives the fine so far (₹10 a day, as on the Fines page) and the last notice | **Send reminder**, **Escalate** |
 | Fine dispute | a student disputed an outstanding or adjusted fine (one dispute per fine, ever); the detail line is their reason, in full (never cut: the dispute is decided on it, and a fine is disputed once) | **Waive / adjust**, **Uphold fine** |
+| No-show dispute | a student disputed a booking recorded as a no-show (one dispute per booking, within 7 days); the card names the resource, the booking ("Thu, Oct 22, 2–4 PM", library time) and gives the student's words in full with their line breaks | **Overturn no-show**, **Uphold flag** |
 | Maintenance flag | a student reported a copy when returning it, or a seat or room they booked, with a category and a note (the card cuts a long note at two lines, all of it on hover; the Confirm and Dismiss dialogs show it whole) | **Confirm & flag copy** (a copy) or **Take offline** (a seat or room), and **Dismiss** |
 
 - **Send reminder**: at most one a day for a loan (an escalation neither starts
@@ -203,6 +232,14 @@ records no-shows yet. An empty queue reads "You're all caught up".
   the dispute with it.
 - **Uphold fine**: closes the dispute with the fine standing; optional note. The
   dialog repeats the student's reason.
+- **Overturn no-show**: removes the flag and restores the reliability points the
+  no-show took; a reason is required (up to 300 characters, off until it holds
+  something besides spaces) and goes in the student's notice. The dialog shows the
+  student's words above the reason field.
+- **Uphold flag**: closes the dispute with the flag standing; optional note. The
+  dialog repeats the student's words. Either one answered meanwhile by someone else
+  is refused with "This dispute was already resolved." and the dialog keeps what
+  was typed.
 - **Confirm & flag copy**: Damaged and Missing pages send the copy to
   maintenance, Lost marks it lost (only a copy on the shelf); optional note.
   Confirming never charges the student. A copy lent out again, or set aside for
@@ -214,12 +251,13 @@ records no-shows yet. An empty queue reads "You're all caught up".
   queue with no further action"); optional note.
 
 **What the student is told.** Every action on this page writes a notice on the
-student's My Loans (kept for 7 days, the 20 newest) and, when the library has set
-up email, sends the same text by email: "Overdue book reminder", "Formal overdue
-notice", "Your fine was waived", "Your fine was reduced", "Your fine stands",
-"Thanks for the report" (the library has taken it out of use) and "About your
-report" (no action was needed). A note you add (for a waive or adjustment, its
-required reason) follows the text as "Note from the library: …". The reminder
+student's My Loans, or My Bookings for a no-show (kept for 7 days, the 20 newest)
+and, when the library has set up email, sends the same text by email: "Overdue
+book reminder", "Formal overdue notice", "Your fine was waived", "Your fine was
+reduced", "Your fine stands", "Thanks for the report" (the library has taken it
+out of use), "About your report" (no action was needed), "No-show removed" and
+"No-show stands". A note you add (for a waive or adjustment, or the required
+reason for overturning a no-show) follows the text as "Note from the library: …". The reminder
 dialog says which applies: "…gets a notice in the app and an email about <title>"
 or "…Email isn't set up." The overdue card's last-notice line ("Reminded 2 days
 ago · emailed") says "emailed" only when the email went out; "not emailed" covers
@@ -244,27 +282,33 @@ refetches, so a dropped connection loses nothing. The top bar shows
 Each event names the topics it affects, and a view refetches on its own:
 
 - `requests`: the Requests page and the sidebar count, and the Catalogue (a
-  pending borrow request holds a copy) and student pages;
+  pending borrow request holds a copy) and student pages (`request.scored`, a
+  room request the model has just scored, is one of these events);
 - `metrics`: the dashboard;
-- `bookings`: the Bookings page (a seat booked, a check-in, a cancel or a move)
-  and the student page;
+- `bookings`: the Bookings page (a seat booked, a check-in, a cancel or a move, a
+  no-show recorded or overturned) and the student page;
 - `resources`: the Resources page (one added, edited, taken offline or brought
   back);
 - `fines`: the Fines page and the student page (a fine marked paid, adjusted or
   waived, disputed, or written when a late loan is returned or renewed);
 - `catalogue`: the Catalogue page and the student page (a book or copy changed,
   a loan returned, a copy lost on loan);
-- `students`: the student page (a manual reliability adjustment);
+- `students`: the student page (a manual reliability adjustment, a no-show
+  recorded or overturned);
 - `attention`: the Needs attention page and its sidebar badge
-  (`attention.changed`: a reminder or escalation sent, a dispute or problem
-  report filed or settled; a late return or renewal, or a copy lost on loan,
-  carries it too, since the overdue card leaves the queue).
+  (`attention.changed`: a reminder or escalation sent, a dispute (a fine's or a
+  no-show's) or problem report filed or settled; a late return or renewal, or a
+  copy lost on loan, carries it too, since the overdue card leaves the queue).
 
 ## Design
 
 The specs and plans for each slice are in `docs/`. Every section of the sidebar
 is built: Bookings and Resources (slice 4), then Fines, Catalogue and the student
 page (slice 5), then Needs attention with fine disputes and problem reports
-(slice 6, `docs/2026-11-22-needs-attention-design.md`). The one part of the design
-canvas not built is no-show handling (no-show disputes and the No-show chip),
-which waits for no-show detection.
+(slice 6, `docs/2026-11-22-needs-attention-design.md`), then no-show handling
+(slice 7, `docs/2026-11-24-no-show-handling-design.md`): the Bookings No-show
+filter, no-show disputes in Needs attention and the Requests page's suggested
+order. The canvas's no-show pieces that were waiting (the No-show option, the
+No-show disputes chip and the Overturn and Uphold dialogs) are built. Detection,
+the sweep and the reliability rule live in the backend (`../backend/README.md`,
+*No-shows*).

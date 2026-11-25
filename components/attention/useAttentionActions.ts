@@ -2,15 +2,15 @@
 
 import { useWriteAction } from '@/components/useWriteAction'
 import {
-  confirmReport, dismissReport, escalateLoan, remindLoan, upholdDispute,
-  type FineDisputeItem, type OverdueItem, type ReportItem, type ReportOutcome,
+  confirmReport, dismissReport, escalateLoan, overturnNoShowDispute, remindLoan, upholdDispute, upholdNoShowDispute,
+  type FineDisputeItem, type NoShowDisputeItem, type OverdueItem, type ReportItem, type ReportOutcome,
 } from '@/lib/attention'
 import { adjustFine } from '@/lib/fines'
 
 /**
  * The Needs attention page's writes, through the console's shared write action: one at a time, the server's
  * refusal ("A reminder was sent 3 hours ago.", "This loan was already escalated.", "This dispute was already
- * resolved.", "This copy is now on loan.") as a toast, and `busy` until the queue has been refetched, so a card cannot be
+ * resolved." (a fine or a no-show dispute), "This copy is now on loan.") as a toast, and `busy` until the queue has been refetched, so a card cannot be
  * acted on twice.
  * Every write resolves true when it went through, false when it was refused or ignored as a second call.
  */
@@ -38,5 +38,11 @@ export function useAttentionActions(refresh: () => Promise<void>) {
       run(() => confirmReport(item.id, { note }), 'Resource taken offline.'),
     /** Closes a report with no action; `note` is optional and goes in the student's notice. */
     dismiss: (item: ReportItem, note: string) => run(() => dismissReport(item.id, note), 'Report dismissed.'),
+    /** Removes the no-show flag and restores the student's score; `reason` is required and goes in the student's notice. */
+    overturnNoShow: (item: NoShowDisputeItem, reason: string) =>
+      run(() => overturnNoShowDispute(item.noShow.disputeId, reason), 'No-show overturned.'),
+    /** Closes a no-show dispute with the flag standing; `note` is optional and goes in the student's notice. */
+    upholdNoShow: (item: NoShowDisputeItem, note: string) =>
+      run(() => upholdNoShowDispute(item.noShow.disputeId, note), 'No-show flag upheld.'),
   }
 }

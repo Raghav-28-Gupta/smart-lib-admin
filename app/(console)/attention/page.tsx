@@ -8,12 +8,17 @@ import { ConfirmCopyReportDialog } from '@/components/attention/ConfirmCopyRepor
 import { DismissDialog } from '@/components/attention/DismissDialog'
 import { EscalateDialog } from '@/components/attention/EscalateDialog'
 import { RemindDialog } from '@/components/attention/RemindDialog'
+import { OverturnNoShowDialog } from '@/components/attention/OverturnNoShowDialog'
 import { StudentWords } from '@/components/attention/StudentWords'
 import { UpholdDialog } from '@/components/attention/UpholdDialog'
+import { UpholdNoShowDialog } from '@/components/attention/UpholdNoShowDialog'
 import { useAttentionActions } from '@/components/attention/useAttentionActions'
 import { AdjustFineDialog } from '@/components/fines/AdjustFineDialog'
 import { OfflineDialog } from '@/components/resources/OfflineDialog'
-import { fineFromDispute, type AttentionKind, type FineDisputeItem, type OverdueItem, type ReportItem } from '@/lib/attention'
+import {
+  ATTENTION_KINDS, fineFromDispute,
+  type AttentionKind, type FineDisputeItem, type NoShowDisputeItem, type OverdueItem, type ReportItem,
+} from '@/lib/attention'
 import { useAttention } from '@/lib/attentionContext'
 
 type Filter = 'all' | AttentionKind
@@ -25,13 +30,16 @@ type OpenDialog =
   | null
   | { kind: 'remind' | 'escalate'; item: OverdueItem }
   | { kind: 'adjust' | 'uphold'; item: FineDisputeItem }
+  | { kind: 'overturnNoShow' | 'upholdNoShow'; item: NoShowDisputeItem }
   | { kind: 'confirmCopy' | 'takeOffline' | 'dismiss'; item: ReportItem }
 
-// No No-show chip: the canvas had one, but a no-show dispute is not part of this queue.
+// The canvas's order. `value` is a kind from ATTENTION_KINDS or the pseudo-kind 'all' (which is why the known-kinds filter below
+// reads ATTENTION_KINDS and not this list).
 const CHIPS: { value: Filter; label: string; plural: string }[] = [
   { value: 'all', label: 'All', plural: 'items' },
   { value: 'overdue', label: 'Overdue follow-ups', plural: 'overdue follow-ups' },
   { value: 'fine_dispute', label: 'Fine disputes', plural: 'fine disputes' },
+  { value: 'no_show_dispute', label: 'No-show disputes', plural: 'no-show disputes' },
   { value: 'report', label: 'Maintenance flags', plural: 'maintenance flags' },
 ]
 
@@ -78,9 +86,9 @@ function AttentionView({ type }: { type: string | null }) {
   if (state.kind === 'error') return <AttentionError onRetry={retry} />
 
   const { counts, emailEnabled } = state.data
-  // A kind this console does not know (a newer server's, such as a no-show dispute) has no card to draw: leave it out rather
-  // than fail the page. `counts` is the server's, so All and the sidebar badge still count it until this console learns the kind.
-  const items = state.data.items.filter((item) => CHIPS.some((chip) => chip.value === item.kind))
+  // A kind this console does not know (a newer server's) has no card to draw: leave it out rather than fail the page.
+  // `counts` is the server's, so All and the sidebar badge still count it until this console learns the kind.
+  const items = state.data.items.filter((item) => ATTENTION_KINDS.some((kind) => kind === item.kind))
   const shown = filter === 'all' ? items : items.filter((item) => item.kind === filter)
 
   return (
@@ -94,7 +102,7 @@ function AttentionView({ type }: { type: string | null }) {
             aria-pressed={filter === chip.value}
             onClick={() => setFilter(chip.value)}
           >
-            {`${chip.label} (${counts[chip.value]})`}
+            {`${chip.label} (${counts[chip.value] ?? 0})`}
           </button>
         ))}
       </div>
@@ -113,6 +121,8 @@ function AttentionView({ type }: { type: string | null }) {
               onEscalate={(overdue) => setDialog({ kind: 'escalate', item: overdue })}
               onAdjust={(dispute) => setDialog({ kind: 'adjust', item: dispute })}
               onUphold={(dispute) => setDialog({ kind: 'uphold', item: dispute })}
+              onOverturnNoShow={(noShow) => setDialog({ kind: 'overturnNoShow', item: noShow })}
+              onUpholdNoShow={(noShow) => setDialog({ kind: 'upholdNoShow', item: noShow })}
               onConfirmCopy={(report) => setDialog({ kind: 'confirmCopy', item: report })}
               onTakeOffline={(report) => setDialog({ kind: 'takeOffline', item: report })}
               onDismiss={(report) => setDialog({ kind: 'dismiss', item: report })}
@@ -149,6 +159,20 @@ function AttentionView({ type }: { type: string | null }) {
           item={dialog.item}
           onCancel={close}
           onConfirm={(note) => closeWhenSent(actions.uphold(dialog.item, note))}
+        />
+      )}
+      {dialog?.kind === 'overturnNoShow' && (
+        <OverturnNoShowDialog
+          item={dialog.item}
+          onCancel={close}
+          onConfirm={(reason) => closeWhenSent(actions.overturnNoShow(dialog.item, reason))}
+        />
+      )}
+      {dialog?.kind === 'upholdNoShow' && (
+        <UpholdNoShowDialog
+          item={dialog.item}
+          onCancel={close}
+          onConfirm={(note) => closeWhenSent(actions.upholdNoShow(dialog.item, note))}
         />
       )}
       {dialog?.kind === 'confirmCopy' && (

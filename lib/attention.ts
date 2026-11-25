@@ -1,9 +1,15 @@
 import { apiRequest } from './api'
 import type { AdminFine, FineStatus } from './fines'
-import { daysAgo, dayCount, rupees, wholeDaysSince } from './format'
+import { LIBRARY_TIMEZONE, daysAgo, dayCount, rupees, shortDay, timeSpan, wholeDaysSince } from './format'
 
-/** What a queue item is about; `?type=` on the page and the chips use the same names. */
-export type AttentionKind = 'overdue' | 'fine_dispute' | 'report'
+/**
+ * Every kind of queue item this console can draw; `?type=` on the page and the chips use the same names. The page leaves out
+ * an item of any kind not listed here (a newer server's), so a kind added later never crashes it.
+ */
+export const ATTENTION_KINDS = ['overdue', 'fine_dispute', 'report', 'no_show_dispute'] as const
+
+/** What a queue item is about. */
+export type AttentionKind = (typeof ATTENTION_KINDS)[number]
 
 /** The newest notice sent about an overdue loan. `emailStatus` says whether the email went out. */
 export interface LastNotice {
@@ -84,14 +90,36 @@ export interface ReportItem extends AttentionItemBase {
   report: ReportDetails
 }
 
+/**
+ * A student's open dispute of a no-show (the no-show handling design, section 7): the booking that was released and recorded
+ * as a no-show, and the student's own words. `disputeId` is what the overturn and uphold routes take (the item's `id` too).
+ */
+export interface NoShowDetails {
+  disputeId: string
+  bookingId: string
+  resource: { id: string; name: string }
+  /** ISO timestamps (UTC): the booking's slot. */
+  startTime: string
+  endTime: string
+  /** The student's own words, at most 300 characters. */
+  studentReason: string
+}
+
+export interface NoShowDisputeItem extends AttentionItemBase {
+  kind: 'no_show_dispute'
+  /** `waitingSince` is when the student filed the dispute. */
+  noShow: NoShowDetails
+}
+
 // GET /admin/attention (the Needs attention design, section 6.1). A discriminated union on `kind`.
-export type AttentionItem = OverdueItem | FineDisputeItem | ReportItem
+export type AttentionItem = OverdueItem | FineDisputeItem | ReportItem | NoShowDisputeItem
 
 export interface AttentionCounts {
   all: number
   overdue: number
   fine_dispute: number
   report: number
+  no_show_dispute: number
 }
 
 /** The whole queue, oldest waiting first. `emailEnabled` is whether a notice goes out by email as well as in the app. */
@@ -164,6 +192,31 @@ export function confirmReport(id: string, body: { outcome?: ReportOutcome; note?
 export function dismissReport(id: string, note: string): Promise<unknown> {
   const trimmed = note.trim()
   return apiRequest<unknown>(`/admin/reports/${encodeURIComponent(id)}/dismiss`, {
+    method: 'POST',
+    body: trimmed ? { note: trimmed } : {},
+  })
+}
+
+/**
+ * Overturns a no-show: the flag is removed and the student's reliability score is restored. The reason is required and goes
+ * in the notice the student gets: it is sent trimmed (the server refuses a blank one with 400). The server answers `{ id }`,
+ * or refuses (409) a dispute that was already resolved, or (404) one that does not exist. `disputeId` is the dispute's own id.
+ */
+export function overturnNoShowDispute(disputeId: string, reason: string): Promise<unknown> {
+  return apiRequest<unknown>(`/admin/no-show-disputes/${encodeURIComponent(disputeId)}/overturn`, {
+    method: 'POST',
+    body: { reason: reason.trim() },
+  })
+}
+
+/**
+ * Closes a no-show dispute with the flag standing. The note is optional and goes in the notice the student gets: it is sent
+ * trimmed, and a blank one sends `{}`. The server answers `{ id }`, or refuses (409) a dispute that was already resolved, or
+ * (404) one that does not exist.
+ */
+export function upholdNoShowDispute(disputeId: string, note: string): Promise<unknown> {
+  const trimmed = note.trim()
+  return apiRequest<unknown>(`/admin/no-show-disputes/${encodeURIComponent(disputeId)}/uphold`, {
     method: 'POST',
     body: trimmed ? { note: trimmed } : {},
   })
@@ -261,4 +314,14 @@ export function reportSummary(report: ReportDetails): string {
       : `A copy, reported at return: ${category}`
   }
   return `${report.resource?.name ?? 'A resource'} — ${category}`
+}
+
+/** "Disputes no-show flag on Discussion Pod 3". */
+export function noShowSummary(noShow: NoShowDetails): string {
+  return `Disputes no-show flag on ${noShow.resource.name}`
+}
+
+/** "Thu, Oct 22, 2–4 PM": the booking the no-show was recorded on, in the library's time zone. */
+export function noShowBookingLine(noShow: NoShowDetails): string {
+  return `${shortDay(noShow.startTime, LIBRARY_TIMEZONE)}, ${timeSpan(noShow.startTime, noShow.endTime, LIBRARY_TIMEZONE)}`
 }

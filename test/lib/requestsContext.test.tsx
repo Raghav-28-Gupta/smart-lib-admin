@@ -31,6 +31,12 @@ const ONE: PendingRequests = {
   counts: { all: 1, borrow: 1, room: 0 },
 }
 
+// What the server answers for `order=request`: a different count, so the test can tell that this reply is the one on screen.
+const TWO: PendingRequests = {
+  requests: [ONE.requests[0], { ...ONE.requests[0], id: 'br-2', requestedAt: '2026-10-22T09:00:00.000Z' }],
+  counts: { all: 2, borrow: 2, room: 0 },
+}
+
 function Probe() {
   const { state, retry } = useRequests()
   if (state.kind === 'loading') return <p>loading</p>
@@ -44,6 +50,42 @@ describe('RequestsProvider', () => {
     mockFetch({ 'GET /admin/requests': () => json(200, ONE) })
     render(<RequestsProvider><Probe /></RequestsProvider>)
     expect(await screen.findByText('1 waiting')).toBeInTheDocument()
+  })
+
+  it('refetches in the order it is told, with the list and the count on screen meanwhile', async () => {
+    writeToken('t')
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fetch = mockFetch({
+      'GET /admin/requests': async () => {
+        if (new URL(String(fetch.mock.calls.at(-1)![0])).searchParams.get('order') !== 'request') return json(200, ONE)
+        await gate
+        return json(200, TWO)
+      },
+    })
+    function Orderer() {
+      const { state, order, setOrder } = useRequests()
+      return (
+        <>
+          <button type="button" onClick={() => setOrder('request')}>By time</button>
+          <p>{state.kind === 'loaded' ? `${waitingCount(state)} waiting` : state.kind} · {order}</p>
+        </>
+      )
+    }
+    render(<RequestsProvider><Orderer /></RequestsProvider>)
+    expect(await screen.findByText('1 waiting · suggested')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'By time' }))
+    // The request for the new order is still out: the count stays, and nothing went back to loading.
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    expect(new URL(String(fetch.mock.calls[1][0])).searchParams.get('order')).toBe('request')
+    expect(screen.getByText('1 waiting · request')).toBeInTheDocument()
+    release()
+    // The reply for the new order lands: its count (2, not the 1 on screen before) is what proves it was applied.
+    expect(await screen.findByText('2 waiting · request')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('keeps the last list when a background refresh fails', async () => {

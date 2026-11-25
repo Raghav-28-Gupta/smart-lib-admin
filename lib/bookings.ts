@@ -4,8 +4,9 @@ import { pageRange } from './format'
 /**
  * The status the library sees, derived by the server at read time (a booked row whose
  * grace period is over is `released`; a checked-in row past its end is `completed`).
+ * `no_show` is the recorded flag: the sweep wrote it (or an overturned dispute took it back to `released`).
  */
-export type BookingStatus = 'booked' | 'released' | 'checked_in' | 'completed' | 'cancelled'
+export type BookingStatus = 'booked' | 'released' | 'checked_in' | 'completed' | 'no_show' | 'cancelled'
 
 // GET /admin/bookings (backend: src/services/adminBookingService.ts).
 export interface AdminBooking {
@@ -35,14 +36,15 @@ export interface BookingsPage {
 
 export const BOOKINGS_PAGE_SIZE = 25
 
-/** The status select's options, in the canvas's order. The canvas's No-show option is left out, as the spec says. */
+/** The status select's options, in the canvas's order. */
 export const BOOKING_STATUS_FILTERS: { value: BookingStatus | 'all'; label: string }[] = [
   { value: 'all', label: 'All statuses' },
   { value: 'booked', label: 'Booked' },
   { value: 'checked_in', label: 'Checked in' },
   { value: 'completed', label: 'Completed' },
-  { value: 'released', label: 'Released (grace period)' },
+  { value: 'no_show', label: 'No-show' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'released', label: 'Released (grace period)' },
 ]
 
 /** Newest start first, 25 to a page. A blank search and the status 'all' send no parameter. */

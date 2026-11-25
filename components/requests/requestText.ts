@@ -22,6 +22,18 @@ export function requestDetail(r: PendingRequest, now: number): string {
   return `${slotText(r)} · slot held until ${clockTime(r.expiresAt, LIBRARY_TIMEZONE)}`
 }
 
+/**
+ * The card's note on a room request that the suggested order puts later than its request time, or null when
+ * there is nothing to say (a borrow request, a booking never scored, a delay of zero). Plain, neutral words:
+ * the number of minutes and the predicted risk are the server's, shown as sent.
+ */
+export function suggestedOrderNote(r: PendingRequest): string | null {
+  const priority = r.room?.priority
+  if (!priority || !(priority.suggestedDelayMinutes > 0)) return null
+  const later = `Suggested order: ${priority.suggestedDelayMinutes} min later`
+  return typeof priority.riskPercent === 'number' ? `${later} (predicted no-show risk ${priority.riskPercent}%)` : later
+}
+
 /** What is asked for: the book's title, or the room and its slot. */
 export function requestSubject(r: PendingRequest): string {
   return r.kind === 'borrow' ? r.book!.title : `${r.room!.name} · ${slotText(r)}`

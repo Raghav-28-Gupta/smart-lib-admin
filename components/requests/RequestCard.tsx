@@ -6,15 +6,19 @@ import { waitingLabel } from '@/lib/format'
 import type { PendingRequest } from '@/lib/requests'
 import { useNow } from '@/lib/useNow'
 import { DeclineDialog } from './DeclineDialog'
-import { requestDetail, requestTitle } from './requestText'
+import { requestDetail, requestTitle, suggestedOrderNote } from './requestText'
 import { useDecision } from './useDecision'
 
-/** One request on the Requests page, in the canvas's "Needs attention" card layout. */
-export function RequestCard({ request }: { request: PendingRequest }) {
+/**
+ * One request on the Requests page, in the canvas's "Needs attention" card layout. `showOrderNote` is off while the
+ * list is in plain request-time order: "Suggested order: 18 min later" would contradict what the list shows.
+ */
+export function RequestCard({ request, showOrderNote }: { request: PendingRequest; showOrderNote: boolean }) {
   const now = useNow()
   const { busy, approve, decline } = useDecision(request)
   const [declining, setDeclining] = useState(false)
   const borrow = request.kind === 'borrow'
+  const orderNote = showOrderNote ? suggestedOrderNote(request) : null
 
   return (
     <div className="card elev-sm" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 14, padding: '14px 16px' }}>
@@ -26,6 +30,7 @@ export function RequestCard({ request }: { request: PendingRequest }) {
         </div>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{requestTitle(request)}</div>
         <div className="text-muted" style={{ fontSize: 12.5 }}>{requestDetail(request, now)}</div>
+        {orderNote && <div className="text-muted" style={{ fontSize: 12.5 }}>{orderNote}</div>}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 'none', minWidth: 150 }}>
         <button type="button" className="btn btn-primary" style={{ padding: '6px 12px', fontSize: 12.5 }} disabled={busy} onClick={() => void approve()}>

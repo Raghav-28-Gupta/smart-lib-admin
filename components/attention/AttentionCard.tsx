@@ -2,9 +2,10 @@
 
 import type { CSSProperties, ReactNode } from 'react'
 import { StudentLink } from '@/components/StudentLink'
+import { StudentWords } from '@/components/attention/StudentWords'
 import {
-  disputeSummary, overdueDetail, overdueSummary, reportSummary, waitingText,
-  type AttentionItem, type FineDisputeItem, type OverdueItem, type ReportItem,
+  disputeSummary, noShowBookingLine, noShowSummary, overdueDetail, overdueSummary, reportSummary, waitingText,
+  type AttentionItem, type FineDisputeItem, type NoShowDisputeItem, type OverdueItem, type ReportItem,
 } from '@/lib/attention'
 import { useNow } from '@/lib/useNow'
 
@@ -20,22 +21,26 @@ const clamp: CSSProperties = {
 
 /**
  * One queue item on the Needs attention page, in the canvas's card layout. The page owns the dialogs and the writes:
- * `onRemind`, `onEscalate`, `onAdjust`, `onUphold`, `onConfirmCopy`, `onTakeOffline` and `onDismiss` open them, and `busy`
- * (a write is running, or the queue has not been refetched since) disables the buttons.
+ * `onRemind`, `onEscalate`, `onAdjust`, `onUphold`, `onOverturnNoShow`, `onUpholdNoShow`, `onConfirmCopy`, `onTakeOffline` and
+ * `onDismiss` open them, and `busy` (a write is running, or the queue has not been refetched since) disables the buttons.
  *
  * An escalated overdue loan (`overdue.escalated`: ever escalated, whatever the newest notice is) carries an "Escalated"
  * tag and has no Escalate button (it happens once per loan); it can still be reminded, and the server holds that to
  * once a day. The detail line shows the newest notice, whichever kind it is.
  *
- * A fine dispute shows the student's words as text (never markup), in full, and offers Waive / adjust (the Fines page's
+ * A fine dispute shows the student's words as text (never markup), in full, each line break kept (`pre-line`), and offers Waive / adjust (the Fines page's
  * adjust dialog) and Uphold fine (a confirmation with an optional note); both dialogs repeat the words.
+ *
+ * A no-show dispute carries the same accent tag and shows the booking ("Thu, Oct 22, 2–4 PM", in the library's time zone)
+ * and the student's words in full, as text with their line breaks kept. It offers Overturn no-show (a dialog that requires a
+ * reason) and Uphold flag (a confirmation with an optional note); both dialogs repeat the words.
  *
  * A problem report carries the neutral "Maintenance flag" tag and shows the student's note as text, cut at two lines (the
  * Confirm and Dismiss dialogs show all of it). A copy report offers Confirm & flag copy, a resource report Take offline
  * (its note box starts with the student's words); both offer Dismiss.
  */
 export function AttentionCard({
-  item, busy, onRemind, onEscalate, onAdjust, onUphold, onConfirmCopy, onTakeOffline, onDismiss,
+  item, busy, onRemind, onEscalate, onAdjust, onUphold, onOverturnNoShow, onUpholdNoShow, onConfirmCopy, onTakeOffline, onDismiss,
 }: {
   item: AttentionItem
   busy: boolean
@@ -43,6 +48,8 @@ export function AttentionCard({
   onEscalate: (item: OverdueItem) => void
   onAdjust: (item: FineDisputeItem) => void
   onUphold: (item: FineDisputeItem) => void
+  onOverturnNoShow: (item: NoShowDisputeItem) => void
+  onUpholdNoShow: (item: NoShowDisputeItem) => void
   onConfirmCopy: (item: ReportItem) => void
   onTakeOffline: (item: ReportItem) => void
   onDismiss: (item: ReportItem) => void
@@ -57,7 +64,7 @@ export function AttentionCard({
         student={item.student}
         waiting={waitingText(item.waitingSince, now)}
         summary={disputeSummary(item.dispute)}
-        detail={<div className="text-muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}>{words}</div>}
+        detail={<div className="text-muted" style={{ fontSize: 12.5, overflowWrap: 'anywhere', whiteSpace: 'pre-line' }}>{words}</div>}
         actions={
           <>
             <button type="button" className="btn btn-primary" style={buttonStyle} disabled={busy} onClick={() => onAdjust(item)}>
@@ -65,6 +72,33 @@ export function AttentionCard({
             </button>
             <button type="button" className="btn btn-ghost" style={buttonStyle} disabled={busy} onClick={() => onUphold(item)}>
               Uphold fine
+            </button>
+          </>
+        }
+      />
+    )
+  }
+
+  if (item.kind === 'no_show_dispute') {
+    return (
+      <CardFrame
+        tags={<span className="tag tag-accent">No-show dispute</span>}
+        student={item.student}
+        waiting={waitingText(item.waitingSince, now)}
+        summary={noShowSummary(item.noShow)}
+        detail={
+          <>
+            <div className="text-muted" style={{ fontSize: 12.5 }}>{noShowBookingLine(item.noShow)}</div>
+            <StudentWords label="The student's reason" words={item.noShow.studentReason} />
+          </>
+        }
+        actions={
+          <>
+            <button type="button" className="btn btn-primary" style={buttonStyle} disabled={busy} onClick={() => onOverturnNoShow(item)}>
+              Overturn no-show
+            </button>
+            <button type="button" className="btn btn-ghost" style={buttonStyle} disabled={busy} onClick={() => onUpholdNoShow(item)}>
+              Uphold flag
             </button>
           </>
         }
