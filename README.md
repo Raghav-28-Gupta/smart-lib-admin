@@ -48,8 +48,8 @@ server's **suggested order**: a request the no-show model scored as likely to be
 missed sits up to 72 minutes later than its request time says (never hidden,
 declined or relabelled), and its card carries a small neutral second line,
 "Suggested order: 18 min later (predicted no-show risk 22%)", only when the delay is
-above zero. A request that was never scored (the AI service is not deployed in
-production, so today none is) is placed by its request time and has no note. The
+above zero. A request that was never scored (the AI service was asleep, down or not
+set up when it was made) is placed by its request time and has no note. The
 **By request time** checkbox at the end of the chip row restores plain request-time
 order (`GET /admin/requests?order=request`) and hides the note; the page puts the
 suggested order back when you leave it. Borrow requests always keep request time,
