@@ -6,7 +6,7 @@ import { json, mockFetch } from '../../helpers'
 
 const OFFLINE_ROOM: AdminResource = {
   id: 'r3', type: 'room', name: 'Group Room 105', location: '1st Floor, West Wing', capacity: 8,
-  status: 'offline', statusNote: 'Projector bulb replacement', upcomingBookings: 1,
+  status: 'offline', statusNote: 'Projector bulb replacement', upcomingBookings: 1, row: null, column: null,
 }
 
 describe('useResourceActions', () => {

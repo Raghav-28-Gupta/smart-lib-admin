@@ -2,6 +2,12 @@ import type { AdminResource, ResourceType } from '@/lib/resources'
 
 const TYPE_LABELS: Record<ResourceType, string> = { seat: 'Seat', room: 'Room' }
 
+/** "Row 2 · Col 5" for a seat on the seat map, "Not on map" for one that is not, and "—" for a room (rooms are never placed). */
+function positionLabel(r: AdminResource): string {
+  if (r.type !== 'seat') return '—'
+  return r.row !== null && r.column !== null ? `Row ${r.row} · Col ${r.column}` : 'Not on map'
+}
+
 /** The canvas's resources table. `busy` disables every action while a change is settling. */
 export function ResourcesTable({
   resources, busy, onEdit, onToggle,
@@ -14,12 +20,13 @@ export function ResourcesTable({
 }) {
   return (
     <div style={{ border: '1px solid var(--color-divider)', borderRadius: 'var(--radius-md)', overflow: 'auto' }}>
-      <table className="table" style={{ width: '100%', minWidth: 640 }}>
+      <table className="table" style={{ width: '100%', minWidth: 720 }}>
         <thead>
           <tr>
             <th>Name</th>
             <th>Type</th>
             <th>Location</th>
+            <th>Position</th>
             <th>Capacity</th>
             <th>Status</th>
             <th aria-label="Actions" />
@@ -33,6 +40,7 @@ export function ResourcesTable({
                 <td>{r.name}</td>
                 <td className="text-muted">{TYPE_LABELS[r.type]}</td>
                 <td className="text-muted">{r.location ?? '—'}</td>
+                <td className="text-muted">{positionLabel(r)}</td>
                 <td className="text-muted">{r.capacity}</td>
                 <td>
                   <span className={`tag ${offline ? 'tag-accent' : 'tag-accent-2'}`}>{offline ? 'Offline' : 'Available'}</span>

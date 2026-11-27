@@ -7,6 +7,7 @@ import { OnlineDialog } from '@/components/resources/OnlineDialog'
 import { ResourceFormDialog } from '@/components/resources/ResourceFormDialog'
 import { ResourcesEmpty, ResourcesError, ResourcesFilterEmpty, ResourcesSkeleton } from '@/components/resources/ResourcesStates'
 import { ResourcesTable } from '@/components/resources/ResourcesTable'
+import { SeatZonesBox } from '@/components/resources/SeatZonesBox'
 import { useResourceActions } from '@/components/resources/useResourceActions'
 import { useLiveRefresh } from '@/lib/liveContext'
 import { fetchResources, type AdminResource, type ResourceType } from '@/lib/resources'
@@ -30,6 +31,8 @@ export default function ResourcesPage() {
 
   const resources = state.kind === 'loaded' ? state.data : []
   const shown = filter === 'all' ? resources : resources.filter((r) => r.type === filter)
+  // Every seat, not just the ones the type filter shows: a position clashes with any seat in the same zone.
+  const seats = resources.filter((r) => r.type === 'seat')
 
   return (
     <>
@@ -77,8 +80,11 @@ export default function ResourcesPage() {
         />
       )}
 
+      {state.kind === 'loaded' && <SeatZonesBox />}
+
       {dialog?.kind === 'add' && (
         <ResourceFormDialog
+          otherSeats={seats}
           onCancel={close}
           onSubmit={(values) => {
             close()
@@ -89,10 +95,11 @@ export default function ResourcesPage() {
       {dialog?.kind === 'edit' && (
         <ResourceFormDialog
           resource={dialog.resource}
+          otherSeats={seats.filter((s) => s.id !== dialog.resource.id)}
           onCancel={close}
-          onSubmit={({ name, location, capacity }) => {
+          onSubmit={({ name, location, capacity, row, column }) => {
             close()
-            void actions.update(dialog.resource, { name, location, capacity })
+            void actions.update(dialog.resource, { name, location, capacity, row, column })
           }}
         />
       )}

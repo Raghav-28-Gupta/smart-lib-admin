@@ -60,12 +60,32 @@ arrives with a `request.scored` event, so an open page reorders by itself.
 ## Resources
 
 The Resources page lists every seat and room by name, with its location,
-capacity and status; a type filter narrows it to seats or rooms. A librarian can:
+position, capacity and status; a type filter narrows it to seats or rooms. A
+librarian can:
 
 - add a resource: type, name, location and a capacity from 1 to 100;
 - edit its name, location and capacity (the type is fixed once it exists);
+- place a seat on the student app's seat map with **Row** and **Column** on the
+  seat form (shown for seats only; whole numbers from 1 to 50);
 - take it offline, with an optional note (up to 300 characters) that shows on
-  its row, or bring it back online.
+  its row, or bring it back online;
+- set the front of each zone in the **Seat map zones** box under the table.
+
+A seat's place is both a row and a column, or neither (both empty keeps the seat
+off the map), and a seat on the map needs a location, which is its zone. Two
+seats in one zone cannot share a spot, and an offline seat still holds its spot.
+The form checks all of this as it is filled in, and names the seat that holds a
+taken spot; the server's own refusal, which only a race reaches, shows as the
+usual toast. The **Position** column reads "Row 2 · Col 5" for a seat on the map,
+"Not on map" for one that is not, and "—" for a room.
+
+A zone is a distinct seat location, written exactly (so "Reading room A" is a
+zone of its own beside "Reading Room A"), and a new one appears as soon as a seat
+is given that location. The Seat map zones box has a line for each, with how many
+seats it has and how many are on the map ("48 seats, 46 on the map"), and a
+**Front of room** box with Save: a label of up to 40 characters that the student
+app prints along the top of that zone's map, such as "Windows". Saving it blank
+clears it. The box refetches with the page on a `resources` event.
 
 An offline resource stops taking new bookings: it leaves the student booking
 picker, is never suggested as an alternative, and no booking can be moved onto
@@ -287,8 +307,9 @@ Each event names the topics it affects, and a view refetches on its own:
 - `metrics`: the dashboard;
 - `bookings`: the Bookings page (a seat booked, a check-in, a cancel or a move, a
   no-show recorded or overturned) and the student page;
-- `resources`: the Resources page (one added, edited, taken offline or brought
-  back);
+- `resources`: the Resources page and its Seat map zones box (one added, edited,
+  moved on the map, taken offline or brought back, or a zone's front label
+  saved);
 - `fines`: the Fines page and the student page (a fine marked paid, adjusted or
   waived, disputed, or written when a late loan is returned or renewed);
 - `catalogue`: the Catalogue page and the student page (a book or copy changed,

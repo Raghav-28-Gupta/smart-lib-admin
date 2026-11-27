@@ -5,7 +5,7 @@ import { OfflineDialog } from '@/components/resources/OfflineDialog'
 import type { AdminResource } from '@/lib/resources'
 
 const ROOM: AdminResource = {
-  id: 'res1', type: 'room', name: 'Group Room 201', location: 'Floor 2', capacity: 6, status: 'available', statusNote: null, upcomingBookings: 3,
+  id: 'res1', type: 'room', name: 'Group Room 201', location: 'Floor 2', capacity: 6, status: 'available', statusNote: null, upcomingBookings: 3, row: null, column: null,
 }
 const note = () => screen.getByLabelText('Note (optional)')
 const takeOffline = () => within(screen.getByRole('dialog')).getByRole('button', { name: 'Take offline' })

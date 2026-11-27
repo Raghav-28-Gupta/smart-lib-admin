@@ -40,6 +40,16 @@ describe('apiRequest', () => {
     expect(init.body).toBe('{"active":false}')
   })
 
+  it('sends PUT with a JSON body', async () => {
+    writeToken('t1')
+    const fetch = mockFetch({ 'PUT /admin/zones/Reading%20Room%20A': () => json(200, { ok: true }) })
+    await expect(apiRequest('/admin/zones/Reading%20Room%20A', { method: 'PUT', body: { frontLabel: 'Windows' } })).resolves.toEqual({ ok: true })
+    const init = fetch.mock.calls[0][1]!
+    expect(init.method).toBe('PUT')
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer t1')
+    expect(init.body).toBe('{"frontLabel":"Windows"}')
+  })
+
   it("turns an error body into an ApiError carrying the server's message", async () => {
     mockFetch({ 'POST /auth/login': () => json(401, { error: "That email and password don't match our records." }) })
     await expect(apiRequest('/auth/login', { method: 'POST', body: {}, auth: false })).rejects.toMatchObject({

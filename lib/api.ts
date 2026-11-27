@@ -52,7 +52,7 @@ export function endSession(reason: SessionEndReason): void {
 
 export async function apiRequest<T>(
   path: string,
-  options: { method?: 'GET' | 'POST' | 'PATCH'; body?: unknown; auth?: boolean } = {},
+  options: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown; auth?: boolean } = {},
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
